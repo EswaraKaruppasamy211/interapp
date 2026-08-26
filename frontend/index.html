@@ -239,6 +239,7 @@
           <h3 style="font-weight:700;" class="mb-4">8-Stage Isolated ATS Candidate Pipeline</h3>
           <div class="pipeline-container-flex" id="ats-kanban-board"></div>
         </div>
+        <div class="saas-card"><h3>AI Recruitment Assistant</h3><form onsubmit="askCompanyAssistantFromDashboard(event)" class="flex-align gap-2 mt-3"><input id="company-dashboard-assistant-input" class="saas-input" placeholder="Ask about candidates, skills, or average match" required><button class="btn-saas btn-primary" type="submit">Ask AI</button></form><p id="company-dashboard-assistant-reply" class="text-sm mt-2"></p></div>
       </section>
 
       <section id="view-company-jobs" class="workspace-view hidden">
@@ -260,7 +261,7 @@
 
       <section id="view-talent-finder" class="workspace-view hidden">
         <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Talent Finder & Candidate Eligibility Engine</h1>
-        <div class="saas-card mb-4"><form onsubmit="askCompanyAssistant(event)" class="flex-align gap-2"><input id="company-assistant-input" class="saas-input" placeholder="Ask which candidates best match this job"><button class="btn-saas btn-primary" type="submit">Ask AI</button></form><p id="company-assistant-reply" class="text-sm mt-2"></p></div><div class="saas-card mb-4"><div id="talent-candidates-list" class="grid-2 gap-4"></div></div>
+        <div class="saas-card mb-4"><form onsubmit="askCompanyAssistant(event)" class="flex-align gap-2"><input id="company-assistant-input" class="saas-input" placeholder="Ask which candidates best match this job"><button class="btn-saas btn-primary" type="submit">Ask AI</button></form><p id="company-assistant-reply" class="text-sm mt-2"></p></div><div class="saas-card mb-4"><label class="text-xs font-bold">View candidates for job<select id="company-job-selector" class="saas-input mt-1" onchange="loadCompanyJobCandidates()"></select></label><div id="talent-candidates-list" class="grid-2 gap-4 mt-3"></div></div>
       </section>
 
       <!-- UNIVERSITY / COLLEGE ADMIN MODULE VIEWS -->

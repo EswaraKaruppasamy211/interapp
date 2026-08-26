@@ -596,9 +596,9 @@ async function loadCompanyATSPipeline() {
     const comp = data.company || {};
     document.getElementById('comp-header').textContent = `${comp.name || 'TechCorp'} ATS Pipeline`;
     document.getElementById('comp-id-badge').textContent = comp.companyId || 'CMP-10001';
-    document.getElementById('comp-total-jobs').textContent = data.total_jobs || 2;
-    document.getElementById('comp-total-apps').textContent = data.total_applicants || 1;
-    document.getElementById('comp-shortlisted').textContent = data.shortlisted || 1;
+    document.getElementById('comp-total-jobs').textContent = data.total_jobs || 0;
+    document.getElementById('comp-total-apps').textContent = data.total_applicants || 0;
+    document.getElementById('comp-shortlisted').textContent = data.shortlisted || 0;
 
     const stages = ['Eligible', 'Applied', 'AI Screening', 'Shortlisted', 'Technical Interview', 'HR Interview', 'Selected', 'Rejected'];
     const board = document.getElementById('ats-kanban-board');
@@ -611,8 +611,8 @@ async function loadCompanyATSPipeline() {
           <div class="pipeline-stage-header"><span>${st}</span><span class="badge-saas badge-blue">${filtered.length}</span></div>
           ${filtered.map(cand => `
             <div class="candidate-kanban-card">
-              <div style="font-weight:700;">${cand.candidate_name || 'Arjun Sharma'}</div>
-              <div style="font-size:0.75rem; color:var(--text-muted);" class="mb-2">CGPA: ${cand.cgpa || 8.8} • ${cand.job_title}</div>
+              <div style="font-weight:700;">${cand.candidate_name || 'Student'}</div>
+              <div style="font-size:0.75rem; color:var(--text-muted);" class="mb-2">CGPA: ${cand.cgpa ?? 'Hidden'} • ${cand.job_title || 'Job'}</div>
               <select class="saas-input" style="font-size:0.75rem; padding:0.25rem 0.5rem;" onchange="handleMoveCandidateStage(${cand.id}, this.value)">
                 ${stages.map(s => `<option value="${s}" ${s === st ? 'selected' : ''}>Move to: ${s}</option>`).join('')}
               </select>
@@ -652,11 +652,16 @@ async function handlePostJobSubmit(e) {
 
 async function loadTalentFinder() {
   try {
-    const students = await apiFetch('/company/talent-finder');
-    document.getElementById('talent-candidates-list').innerHTML = students.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.studentId} • ${s.department}</div><div style="font-size:0.85rem; font-weight:800; color:var(--text-emerald);" class="mt-2">${s.matchPercentage}% · ${s.recommendationLevel}</div><div class="text-xs mt-2">${s.skills.map(skill => `${skill.name} ${skill.scoreOutOfTen}/10`).join(', ') || 'Skills hidden by privacy settings'}</div></div>`).join('');
+    const data = await apiFetch('/company/dashboard');
+    const selector = document.getElementById('company-job-selector');
+    const jobs = data.jobs || [];
+    selector.innerHTML = jobs.length ? jobs.map(job => `<option value="${job.id}">${job.title}</option>`).join('') : '<option value="">No jobs posted</option>';
+    await loadCompanyJobCandidates();
   } catch (e) {}
 }
+async function loadCompanyJobCandidates() { const jobId = document.getElementById('company-job-selector')?.value; if (!jobId) { document.getElementById('talent-candidates-list').innerHTML = '<p>No jobs posted yet.</p>'; return; } try { const data = await apiFetch(`/company/jobs/${jobId}/candidates`); document.getElementById('talent-candidates-list').innerHTML = data.candidates.length ? data.candidates.map(candidate => `<div class="saas-card"><h4>${candidate.name}</h4><div class="text-xs">${candidate.studentId} · CGPA: ${candidate.cgpa ?? 'Hidden'}</div><strong style="color:var(--text-emerald);">${candidate.matchPercentage}% · ${candidate.recommendationLevel}</strong><p class="text-xs mt-2">${candidate.skills.map(skill => `${skill.name} ${skill.scoreOutOfTen}/10`).join(', ') || 'Skills hidden by privacy settings'}</p><p class="text-xs mt-2">${candidate.skillGaps.filter(item => item.result === 'Gap').map(item => `Gap: ${item.skill}`).join(', ') || 'All listed requirements matched'}</p></div>`).join('') : '<p>No privacy-eligible candidates available.</p>'; } catch (err) { document.getElementById('talent-candidates-list').textContent = err.message; } }
 async function askCompanyAssistant(event) { event.preventDefault(); try { const data = await apiFetch('/company/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('company-assistant-input').value }) }); document.getElementById('company-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('company-assistant-reply').textContent = err.message; } }
+async function askCompanyAssistantFromDashboard(event) { event.preventDefault(); try { const data = await apiFetch('/company/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('company-dashboard-assistant-input').value }) }); document.getElementById('company-dashboard-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('company-dashboard-assistant-reply').textContent = err.message; } }
 
 // COLLEGE ADMIN LOADERS
 async function loadCollegeDashboard() {

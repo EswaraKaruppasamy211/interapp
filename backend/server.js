@@ -1353,7 +1353,24 @@ const server = http.createServer(async (req, res) => {
       const compJobs = state.jobs.filter(j => j.companyId === compId);
       const compApps = state.applications.filter(a => a.companyId === compId);
 
-      return sendJSON(200, { company, total_jobs: compJobs.length, total_applicants: compApps.length, shortlisted: compApps.filter(a => a.status === 'Shortlisted' || a.status === 'Technical Interview').length, pipeline: compApps });
+      return sendJSON(200, { company, jobs: compJobs, total_jobs: compJobs.length, total_applicants: compApps.length, shortlisted: compApps.filter(a => a.status === 'Shortlisted' || a.status === 'Technical Interview').length, pipeline: compApps });
+    }
+
+    if (pathname.match(/^\/api\/company\/jobs\/\d+\/candidates$/) && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Access Denied. Company Auth Required.' });
+      const jobId = Number(pathname.split('/')[4]);
+      const job = state.jobs.find(item => item.id === jobId && item.companyId === authUser.companyId);
+      if (!job) return sendJSON(404, { error: 'Job not found for this company.' });
+      const candidates = state.users.filter(user => user.role === 'student').map(user => {
+        const settings = getStudentSettings(user.id);
+        if (settings.profileVisibility === 'private' || settings.recruiterDiscovery === false) return null;
+        const company = state.companies.find(item => item.companyId === job.companyId) || {};
+        const match = calculateCompanyMatch(user.id, { ...company, required_skills: job.required_skills || [], min_cgpa: job.min_cgpa });
+        const profile = state.studentProfiles[user.id] || {};
+        return { studentId: user.student_id, name: profile.name || 'Student', cgpa: settings.showAcademicInfo === false ? null : profile.cgpa, skills: settings.showSkills === false ? [] : (state.userSkills[user.id] || []).map(skill => ({ name: skill.skill_name, percentage: Number(skill.level_pct || 0), scoreOutOfTen: Number((Number(skill.level_pct || 0) / 10).toFixed(1)) })), matchPercentage: match.matchPercentage, recommendationLevel: match.recommendationLevel, strengths: match.strengths, skillGaps: match.skillGaps, privacy: { academicInfo: settings.showAcademicInfo !== false, skills: settings.showSkills !== false } };
+      }).filter(Boolean).sort((a, b) => b.matchPercentage - a.matchPercentage);
+      return sendJSON(200, { job, candidates });
     }
 
     if (pathname === '/api/company/jobs' && req.method === 'POST') {
@@ -1379,7 +1396,9 @@ const server = http.createServer(async (req, res) => {
       const authUser = getAuthUser();
       if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Access Denied. Company Auth Required.' });
       const { applicationId, newStage } = await parseJSON(req);
-      const app = state.applications.find(a => a.id === Number(applicationId));
+      const companyId = authUser.companyId || '';
+      const app = state.applications.find(a => a.id === Number(applicationId) && a.companyId === companyId);
+      if (!app) return sendJSON(404, { error: 'Application not found for this company.' });
       if (app) {
         app.status = newStage;
         app.last_updated = new Date().toISOString().split('T')[0];

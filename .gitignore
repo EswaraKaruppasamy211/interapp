@@ -9,6 +9,8 @@ backend/server-err.log
 # Databases and secrets
 backend/data.json
 backend/skillmap.db
+backend/skillbridge-state.json
+uploads/
 *.db
 .env
 

@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { URL } = require('url');
 
 // Environment Setup
@@ -30,6 +31,7 @@ const port = Number(process.env.PORT) || 3000;
 const repoRoot = path.resolve(__dirname, '..');
 const uploadsDir = path.join(repoRoot, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const stateFile = path.join(__dirname, 'skillbridge-state.json');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'skillbridge-unique-backend-secret-key-2026';
 
@@ -69,11 +71,42 @@ function verifyToken(token) {
 }
 
 // Unique ID Generators
-let counters = { company: 10002, student: 102, job: 101, app: 901, cert: 401 };
+let counters = { company: 10002, student: 0, job: 101, app: 901, cert: 401 };
 function nextCompanyId() { return `CMP-${++counters.company}`; }
-function nextStudentId() { return `STU-2026-${++counters.student}`; }
+function nextStudentId() { return `SB${new Date().getFullYear()}ST${String(++counters.student).padStart(3, '0')}`; }
 function nextJobId() { return ++counters.job; }
 function nextAppId() { return ++counters.app; }
+
+const otpStore = {};
+
+function generateOtpCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function sendOtpEmail(email, code) {
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    console.log(`[DEV OTP] ${email} => ${code}`);
+    return { simulated: true };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: false,
+    auth: { user: smtpUser, pass: smtpPass }
+  });
+
+  return transporter.sendMail({
+    from: process.env.SMTP_FROM || 'SkillBridge <noreply@skillbridge.local>',
+    to: email,
+    subject: 'SkillBridge OTP Verification',
+    text: `Your SkillBridge OTP is ${code}. It is valid for 3 minutes.`
+  });
+}
 
 // Unique State Store
 let state = {
@@ -97,6 +130,27 @@ let state = {
   jobs: [],
   applications: [],
   notifications: {},
+  preferences: {},
+  settings: {},
+  certificates: {},
+  projects: {},
+  placements: {},
+  campusDrives: [
+    {
+      id: 1,
+      company: 'TechCorp Solutions',
+      title: 'Campus Software Developer Drive',
+      role: 'Software Developer',
+      date: '2026-10-15',
+      deadline: '2026-10-05',
+      location: 'Anna University Campus',
+      salary: '₹ 8 LPA',
+      minimumCGPA: 7.5,
+      department: 'Computer Science & Engineering',
+      degree: 'B.E./B.Tech',
+      requiredSkills: [{ skillName: 'Java', minimumPercentage: 80 }, { skillName: 'Communication', minimumPercentage: 70 }]
+    }
+  ],
   collegeAnalytics: {
     total_students: 450,
     placed_students: 382,
@@ -111,6 +165,20 @@ let state = {
     ]
   }
 };
+
+function persistState() {
+  try { fs.writeFileSync(stateFile, JSON.stringify({ state, counters }, null, 2)); } catch (error) { console.error('State persistence failed:', error.message); }
+}
+
+function restoreState() {
+  try {
+    if (!fs.existsSync(stateFile)) return;
+    const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    if (saved.state) state = { ...state, ...saved.state };
+    if (saved.counters) counters = { ...counters, ...saved.counters };
+    if (!Array.isArray(state.campusDrives)) state.campusDrives = [];
+  } catch (error) { console.error('State restore failed:', error.message); }
+}
 
 // Seed Unique Initial Data
 function seedData() {
@@ -262,34 +330,33 @@ function seedData() {
 }
 
 seedData();
+restoreState();
 
 // Unique AI Employability Skill Score Engine
 function calculateSkillScore(studentId) {
   const profile = state.studentProfiles[studentId || 1] || {};
   const skills = state.userSkills[studentId || 1] || [];
-  const certs = state.certifications[studentId || 1] || [];
+  const certs = state.certificates[studentId || 1] || [];
+  const projects = state.projects[studentId || 1] || [];
   const backlog = state.backlogs[studentId || 1] || {};
 
   let score = 0;
-  // 1. CGPA Weightage (Max 40 points)
   const cgpa = Number(profile.cgpa || 8.0);
   score += Math.min(40, (cgpa / 10) * 40);
 
-  // 2. Skills Count & Proficiency Weightage (Max 30 points)
   let skillPoints = skills.reduce((acc, s) => {
-    if (s.proficiency === 'Expert') return acc + 6;
-    if (s.proficiency === 'Advanced') return acc + 5;
-    return acc + 3;
+    const proficiency = String(s.proficiency || s.level_pct || '').toLowerCase();
+    if (proficiency.includes('expert')) return acc + 6;
+    if (proficiency.includes('advanced')) return acc + 5;
+    if (proficiency.includes('intermediate')) return acc + 3;
+    return acc + 2;
   }, 0);
   score += Math.min(30, skillPoints);
 
-  // 3. Certifications Weightage (Max 15 points)
   score += Math.min(15, certs.length * 7.5);
 
-  // 4. Projects & Problem Solving (Max 15 points)
-  score += 15;
+  score += Math.min(15, projects.length * 5);
 
-  // Penalty for current backlogs
   if (backlog.current_backlogs > 0) score -= (backlog.current_backlogs * 10);
 
   return Math.max(0, Math.min(100, Math.round(score)));
@@ -299,14 +366,14 @@ function calculateSkillScore(studentId) {
 function calculateCompanyMatch(studentId, company) {
   const profile = state.studentProfiles[studentId || 1] || {};
   const skills = state.userSkills[studentId || 1] || [];
-  const studentSkillNames = skills.map(s => s.skill_name.toLowerCase());
+  const studentSkills = skills.reduce((map, skill) => { map[skill.skill_name.toLowerCase()] = Number(skill.level_pct || 0); return map; }, {});
   const reqSkills = company.required_skills || [];
 
   let matchedSkills = 0;
   let skillGaps = [];
 
   reqSkills.forEach(req => {
-    const found = studentSkillNames.some(s => s.includes(req.toLowerCase()) || req.toLowerCase().includes(s));
+    const found = Object.entries(studentSkills).some(([name, level]) => (name.includes(req.toLowerCase()) || req.toLowerCase().includes(name)) && level >= 70);
     if (found) {
       matchedSkills++;
       skillGaps.push({ skill: req, reqLevel: 'Advanced', studentLevel: 'Advanced', gap: 'No Gap — Qualified' });
@@ -324,7 +391,7 @@ function calculateCompanyMatch(studentId, company) {
     companyName: company.name,
     matchPercentage: overallMatchPct,
     skillGaps,
-    isEligible: overallMatchPct >= 75,
+    isEligible: matchedSkills === reqSkills.length && Number(profile.cgpa || 0) >= Number(company.min_cgpa || 0),
     recommendations: skillGaps.filter(g => g.gap.includes('Missing')).map(g => `Complete course on ${g.skill} to boost match rate by 15%`)
   };
 }
@@ -346,6 +413,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = parsedUrl.pathname;
 
   const sendJSON = (statusCode, data) => {
+    persistState();
     res.writeHead(statusCode, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
@@ -394,11 +462,48 @@ const server = http.createServer(async (req, res) => {
     // ----------------------------------------------------
     // AUTHENTICATION APIs
     // ----------------------------------------------------
+    if (pathname === '/api/auth/send-otp' && req.method === 'POST') {
+      const { email } = await parseJSON(req);
+      if (!email || !String(email).trim()) return sendJSON(400, { error: 'Email is required.' });
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const existing = otpStore[normalizedEmail];
+      const now = Date.now();
+      if (existing && (now - existing.createdAt) < 30000) {
+        return sendJSON(429, { error: 'Please wait 30 seconds before requesting a new OTP.' });
+      }
+      const code = generateOtpCode();
+      otpStore[normalizedEmail] = { code, createdAt: now, expiresAt: now + 180000, verified: false };
+      await sendOtpEmail(normalizedEmail, code);
+      return sendJSON(200, {
+        success: true,
+        message: 'OTP sent to your email.',
+        expiresInSeconds: 180,
+        devCode: code
+      });
+    }
+
+    if (pathname === '/api/auth/verify-otp' && req.method === 'POST') {
+      const { email, otp } = await parseJSON(req);
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      const targetOtp = String(otp || '').trim();
+      const entry = otpStore[normalizedEmail];
+      if (!entry) return sendJSON(400, { error: 'OTP has not been requested for this email.' });
+      if (Date.now() > entry.expiresAt) {
+        delete otpStore[normalizedEmail];
+        return sendJSON(400, { error: 'OTP expired. Please request a new one.' });
+      }
+      if (targetOtp !== entry.code) return sendJSON(400, { error: 'Invalid OTP.' });
+      otpStore[normalizedEmail] = { ...entry, verified: true, verifiedAt: Date.now() };
+      return sendJSON(200, { success: true, message: 'Email verified successfully.' });
+    }
+
     if (pathname === '/api/auth/register' && req.method === 'POST') {
-      const { fullName, email, mobile, studentId, companyName, managerName, collegeName, adminName, role, password } = await parseJSON(req);
+      const { fullName, username, email, mobile, companyName, managerName, collegeName, adminName, role, password, confirmPassword } = await parseJSON(req);
       const userRole = role || 'student';
       const newId = Date.now();
-      const { salt, hash } = hashPassword(password || 'Password@123');
+      const effectiveConfirmPassword = typeof confirmPassword === 'undefined' ? password : confirmPassword;
+      if (!password || password.length < 8) return sendJSON(400, { error: 'Password must be at least 8 characters.' });
+      if (password !== effectiveConfirmPassword) return sendJSON(400, { error: 'Passwords do not match' });
 
       if (userRole === 'company') {
         if (!companyName || !email || !password) return sendJSON(400, { error: 'Company Name, Email, and Password required.' });
@@ -406,25 +511,37 @@ const server = http.createServer(async (req, res) => {
         const newComp = { id: newId, companyId: assignedCompId, name: companyName, logo: '🏢', industry: 'Corporate Partner', manager_name: managerName || 'Recruitment Manager', min_cgpa: 7.0, min_ai_score: 70, required_skills: ['Java', 'SQL'] };
         state.companies.push(newComp);
 
-        const newUser = { id: newId, email, username: email.split('@')[0], companyName, companyId: assignedCompId, password_hash: hash, salt, role: 'company' };
+        const credentials = hashPassword(password);
+        const newUser = { id: newId, email, username: email.split('@')[0], companyName, companyId: assignedCompId, password_hash: credentials.hash, salt: credentials.salt, role: 'company' };
         state.users.push(newUser);
         const token = generateToken({ id: newUser.id, email, companyId: assignedCompId, role: 'company' });
         return sendJSON(201, { token, user: newUser, company: newComp });
 
       } else if (userRole === 'college') {
         if (!collegeName || !email || !password) return sendJSON(400, { error: 'University Name, Email, and Password required.' });
-        const newUser = { id: newId, email, username: email.split('@')[0], collegeName, adminName: adminName || 'University Admin', password_hash: hash, salt, role: 'college' };
+        const credentials = hashPassword(password);
+        const newUser = { id: newId, email, username: email.split('@')[0], collegeName, adminName: adminName || 'University Admin', password_hash: credentials.hash, salt: credentials.salt, role: 'college' };
         state.users.push(newUser);
         const token = generateToken({ id: newUser.id, email, role: 'college' });
         return sendJSON(201, { token, user: newUser });
 
       } else {
-        const assignedStuId = studentId || nextStudentId();
-        const newUser = { id: newId, email, username: email.split('@')[0], student_id: assignedStuId, password_hash: hash, salt, role: 'student' };
+        if (!fullName || !username || !email || !mobile) return sendJSON(400, { error: 'Full name, username, email, and mobile number are required.' });
+        const normalizedUsername = username.toLowerCase();
+        if (state.users.some(u => u.email.toLowerCase() === email.toLowerCase() || u.username.toLowerCase() === normalizedUsername)) return sendJSON(409, { error: 'Username or email is already registered.' });
+        const emailKey = String(email).trim().toLowerCase();
+        const otpEntry = otpStore[emailKey];
+        if (!otpEntry || !otpEntry.verified || Date.now() > otpEntry.expiresAt) {
+          return sendJSON(400, { error: 'Email verification is required before creating a student account.' });
+        }
+        const assignedStuId = nextStudentId();
+        const { salt, hash } = hashPassword(password);
+        const newUser = { id: newId, email, username: normalizedUsername, student_id: assignedStuId, password_hash: hash, salt, role: 'student' };
         state.users.push(newUser);
-        state.studentProfiles[newId] = { user_id: newId, name: fullName || 'New Student', email, phone: mobile || '+91 9876543210', student_id: assignedStuId, college: 'Anna University', department: 'Computer Science & Engg', cgpa: 8.5 };
+        state.studentProfiles[newId] = { user_id: newId, name: fullName, email, phone: mobile, student_id: assignedStuId, onboarding_complete: false };
+        delete otpStore[emailKey];
         const token = generateToken({ id: newUser.id, email, role: 'student' });
-        return sendJSON(201, { token, user: newUser, profile: state.studentProfiles[newId] });
+        return sendJSON(201, { token, user: newUser, profile: state.studentProfiles[newId], studentId: assignedStuId });
       }
     }
 
@@ -463,23 +580,577 @@ const server = http.createServer(async (req, res) => {
     // ----------------------------------------------------
     // STUDENT MODULE APIs
     // ----------------------------------------------------
-    if (pathname === '/api/student/profile' && req.method === 'GET') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
-      return sendJSON(200, { profile: state.studentProfiles[userId] || state.studentProfiles[1], completion: { percentage: 80, missingItems: [] }, resume: state.resumes[userId] || state.resumes[1] });
+      const requireStudent = () => {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'student') return null;
+      return authUser;
+    };
+    const calculateCGPA = records => {
+      const completed = (records || []).filter(record => record.gpa !== '' && record.gpa !== null && record.gpa !== undefined && Number.isFinite(Number(record.gpa)));
+      return completed.length ? Number((completed.reduce((sum, record) => sum + Number(record.gpa), 0) / completed.length).toFixed(2)) : null;
+    };
+      const getStudentSettings = studentId => ({
+        jobNotifications: true,
+        internshipNotifications: true,
+        campusDriveNotifications: true,
+        applicationNotifications: true,
+        interviewNotifications: true,
+        placementNotifications: true,
+        profileVisibility: 'public',
+        recruiterDiscovery: true,
+        showSkills: true,
+        showAcademicInfo: true,
+        showContactInfo: false,
+        theme: 'system',
+        ...(state.settings[studentId] || {})
+      });
+      const calculateProfileCompletion = studentId => {
+        const profile = state.studentProfiles[studentId] || {};
+        const academics = state.academicRecords[studentId] || [];
+        const skills = state.userSkills[studentId] || [];
+        const certs = state.certificates[studentId] || [];
+        const projects = state.projects[studentId] || [];
+        const prefs = state.preferences[studentId] || {};
+        const requiredFields = [
+          profile.name, profile.phone, profile.college, profile.university, profile.department, profile.degree,
+          profile.currentYear, profile.currentSemester, profile.graduationYear,
+          profile.dateOfBirth, profile.gender, profile.email,
+          profile.address && (profile.address.doorHouse || profile.address.street || profile.address.city || profile.address.state),
+          profile.linkedin_url, profile.github_url, profile.portfolio_url,
+          (state.resumes[studentId] || profile.resume_url),
+          academics.some(r => Number.isFinite(Number(r.gpa))),
+          skills.length > 0,
+          prefs.jobRoles && prefs.jobRoles.length,
+          certs.length,
+          projects.length
+        ];
+        const completed = requiredFields.filter(Boolean).length;
+        const total = requiredFields.length;
+        const percentage = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+        return { percentage, completed, total };
+      };
+
+      const getStudentSkillSet = studentId => (state.userSkills[studentId] || []).map(skill => ({
+        name: String(skill.skill_name || skill.skillName || '').trim(),
+        percentage: Number(skill.level_pct ?? skill.proficiencyPercentage ?? skill.proficiency ?? 0),
+        category: skill.category || 'Other',
+        id: skill.id || Date.now() + Math.random()
+      })).filter(skill => skill.name);
+
+      const buildSkillAnalysis = studentId => {
+        const skills = getStudentSkillSet(studentId);
+        const projects = state.projects[studentId] || [];
+        const certificates = state.certificates[studentId] || [];
+        const internships = state.internships[studentId] || [];
+        const resume = state.resumes[studentId];
+        const assessment = state.assessments[studentId] || {};
+        const overall = Number(assessment.overall_score || 0);
+
+        const skillAnalysis = skills.map(skill => {
+          const evidence = [];
+          const projectMentions = projects.filter(project => {
+            const techText = (project.technologies || '').toString().toLowerCase();
+            return techText.includes(skill.name.toLowerCase());
+          }).length;
+          if (projectMentions) evidence.push(`${projectMentions} project${projectMentions > 1 ? 's' : ''} using ${skill.name}`);
+
+          if (certificates.some(c => String(c.certificateName || c.name || '').toLowerCase().includes(skill.name.toLowerCase()) || String(c.relatedSkill || '').toLowerCase().includes(skill.name.toLowerCase()))) {
+            evidence.push('Certificate evidence');
+          }
+          if (internships.some(i => String(i.technologies || '').toLowerCase().includes(skill.name.toLowerCase()) || String(i.role || '').toLowerCase().includes(skill.name.toLowerCase()))) {
+            evidence.push('Internship usage');
+          }
+          if (resume) evidence.push('Resume mentions the skill');
+          if (Number.isFinite(overall) && overall > 0) evidence.push(`Assessment score ${overall}/100`);
+
+          const score = Math.min(100, Math.max(0, Math.round(skill.percentage * 0.55 + (projectMentions * 8) + (certificates.length ? 6 : 0) + (internships.length ? 8 : 0) + (resume ? 8 : 0) + (overall ? overall * 0.12 : 0))));
+          const confidence = score >= 80 ? 'High' : score >= 60 ? 'Medium' : 'Low';
+          const strengths = [];
+          if (skill.percentage >= 80) strengths.push('Strong practical confidence');
+          if (projectMentions) strengths.push('Applied in projects');
+          if (internships.length) strengths.push('Internship exposure');
+          const weakAreas = [];
+          if (score < 70) weakAreas.push('Need deeper practical exercises');
+          if (!projectMentions) weakAreas.push('Add a project using this skill');
+          if (!certificates.length && !internships.length) weakAreas.push('Add evidence via certification or internship');
+          const recommendations = [];
+          if (score < 75) recommendations.push(`Practice advanced ${skill.name} use cases`);
+          if (score >= 75 && score < 90) recommendations.push(`Build a portfolio project around ${skill.name}`);
+          if (score >= 90) recommendations.push(`Mentor others and document advanced use cases`);
+
+          return {
+            skillName: skill.name,
+            category: skill.category,
+            score,
+            confidence,
+            evidence: evidence.length ? evidence : ['Insufficient evidence — complete an assessment or add projects/certificates.'],
+            strengths: strengths.length ? strengths : ['Current skill baseline recorded'],
+            weakAreas: weakAreas.length ? weakAreas : ['No immediate gap detected'],
+            recommendations: recommendations.length ? recommendations : ['Maintain current learning momentum']
+          };
+        });
+
+        const overallScore = skills.length ? Math.round(skillAnalysis.reduce((sum, item) => sum + item.score, 0) / skillAnalysis.length) : 0;
+        return {
+          overallScore,
+          confidence: overallScore >= 80 ? 'High' : overallScore >= 60 ? 'Medium' : 'Low',
+          skills: skillAnalysis,
+          targetRole: 'Full Stack Developer',
+          factors: {
+            assessment: Number(assessment.overall_score || 0),
+            projects: projects.length * 10,
+            certificates: Math.min(100, certificates.length * 20),
+            internships: Math.min(100, internships.length * 25),
+            resume: resume ? 80 : 50,
+            selfRating: skills.length ? Math.round(skills.reduce((sum, item) => sum + Number(item.percentage || 0), 0) / skills.length) : 0
+          }
+        };
+      };
+
+      const buildCareerRecommendations = studentId => {
+        const skills = getStudentSkillSet(studentId);
+        const skillNames = skills.map(skill => skill.name);
+        const roles = [
+          { name: 'Full Stack Developer', target: ['JavaScript', 'React', 'Java', 'SQL', 'Node.js'], match: 0 },
+          { name: 'Frontend Developer', target: ['React', 'JavaScript', 'HTML', 'CSS', 'UI/UX'], match: 0 },
+          { name: 'Backend Developer', target: ['Java', 'Python', 'SQL', 'REST API', 'Spring'], match: 0 },
+          { name: 'Data Analyst', target: ['SQL', 'Python', 'Excel', 'Tableau', 'Analytics'], match: 0 }
+        ];
+
+        roles.forEach(role => {
+          const hits = role.target.filter(target => skillNames.some(skill => skill.toLowerCase().includes(target.toLowerCase()) || target.toLowerCase().includes(skill.toLowerCase())));
+          const missing = role.target.filter(target => !hits.includes(target));
+          role.match = Math.min(98, Math.max(45, Math.round((hits.length / role.target.length) * 100)));
+          role.matchingSkills = hits.slice(0, 4);
+          role.missingSkills = missing.slice(0, 4);
+          role.recommendedImprovements = missing.slice(0, 3);
+        });
+
+        return roles.sort((a, b) => b.match - a.match).slice(0, 4);
+      };
+
+      if (pathname === '/api/student/profile' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+        const profile = state.studentProfiles[authUser.id] || { user_id: authUser.id, student_id: authUser.student_id, onboarding_complete: false };
+      const academics = state.academicRecords[authUser.id] || [];
+      const skills = state.userSkills[authUser.id] || [];
+        const certs = state.certificates[authUser.id] || [];
+        const projects = state.projects[authUser.id] || [];
+        const prefs = state.preferences[authUser.id] || {};
+        const completion = calculateProfileCompletion(authUser.id);
+        const missingItems = [];
+        if (!profile.name || !profile.phone || !profile.dateOfBirth || !profile.gender) missingItems.push('personal details');
+        if (!profile.college || !profile.university || !profile.department || !profile.degree || !profile.graduationYear) missingItems.push('college details');
+        if (!(profile.address && (profile.address.city || profile.address.state || profile.address.pincode))) missingItems.push('address');
+        if (!academics.some(record => Number.isFinite(Number(record.gpa)))) missingItems.push('semester GPA');
+        if (!skills.length) missingItems.push('skills');
+        if (!(prefs.jobRoles && prefs.jobRoles.length) || !(prefs.opportunityTypes && prefs.opportunityTypes.length)) missingItems.push('career preferences');
+        if (!(profile.resume_url || state.resumes[authUser.id])) missingItems.push('resume');
+        if (!(profile.linkedin_url || profile.github_url || profile.portfolio_url)) missingItems.push('professional links');
+        if (!certs.length) missingItems.push('certificates');
+        if (!projects.length) missingItems.push('projects');
+        return sendJSON(200, {
+          profile,
+          completion: { ...completion, missingItems },
+          resume: state.resumes[authUser.id] || null,
+          skills,
+          certificates: certs,
+          projects,
+          preferences: prefs,
+          settings: getStudentSettings(authUser.id)
+        });
+      }
+    if (pathname === '/api/student/dashboard' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
+      const profile = state.studentProfiles[userId] || {};
+      const completion = calculateProfileCompletion(userId);
+      const analysis = buildSkillAnalysis(userId);
+      const applications = state.applications.filter(application => application.student_id === userId);
+      const recommendedJobs = state.jobs.slice(0, 3).map(job => {
+        const company = state.companies.find(item => item.companyId === job.companyId) || state.companies[0];
+        const match = calculateCompanyMatch(userId, company);
+        return { ...job, company_name: company.name, match_percentage: match.matchPercentage, is_eligible: match.isEligible };
+      });
+      return sendJSON(200, {
+        profile,
+        profileCompletion: { ...completion, missingItems: completion.missingItems || [] },
+        placementReadiness: {
+          score: calculateSkillScore(userId),
+          strongest: 'Technical Skills',
+          weakest: 'Interview Practice',
+          actions: ['Add one more project', 'Take a skill assessment', 'Improve resume keywords']
+        },
+        skillScore: calculateSkillScore(userId),
+        resumeScore: state.resumes[userId] ? 82 : 54,
+        certificates: state.certificates[userId]?.length || 0,
+        projects: state.projects[userId]?.length || 0,
+        internships: state.internships[userId]?.length || 0,
+        applications: applications.length,
+        technicalSkills: (state.userSkills[userId] || []).length,
+        recommendedJobs,
+        careerRecommendations: buildCareerRecommendations(userId)
+      });
+    }
+    if (pathname === '/api/ai/skill-analysis' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, buildSkillAnalysis(authUser.id));
+    }
+    if (pathname === '/api/ai/skill-gap' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const targetSkills = ['JavaScript', 'React', 'Node.js', 'REST API', 'Testing', 'Docker'];
+      const current = getStudentSkillSet(authUser.id).map(skill => skill.name);
+      const strong = current.filter(skill => targetSkills.some(target => skill.toLowerCase().includes(target.toLowerCase()))).slice(0, 5);
+      const missing = targetSkills.filter(target => !current.some(skill => skill.toLowerCase().includes(target.toLowerCase())));
+      const needsImprovement = current.filter(skill => !strong.includes(skill)).slice(0, 5);
+      return sendJSON(200, {
+        targetRole: 'Full Stack Developer',
+        strong,
+        needsImprovement,
+        missing,
+        recommendedLearningPath: ['Advanced React', 'Node.js', 'REST APIs', 'Authentication', 'Testing', 'Docker']
+      });
+    }
+    if (pathname === '/api/ai/career-recommendation' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { roles: buildCareerRecommendations(authUser.id) });
+    }
+    if (pathname === '/api/ai/chat' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const message = String(body.message || '').toLowerCase();
+      const analysis = buildSkillAnalysis(authUser.id);
+      const skills = getStudentSkillSet(authUser.id).map(skill => skill.name).join(', ') || 'No skills added yet';
+      if (message.includes('skill') && message.includes('learn')) {
+        return sendJSON(200, { reply: `Based on your current profile, focus on ${analysis.skills.slice(0, 3).map(item => item.skillName).join(', ')} and add projects in Node.js, REST APIs, and testing to improve your placement readiness.` });
+      }
+      if (message.includes('python')) {
+        const pythonSkill = analysis.skills.find(item => item.skillName.toLowerCase().includes('python'));
+        return sendJSON(200, { reply: pythonSkill ? `Your Python score is ${pythonSkill.score}/100 with ${pythonSkill.confidence.toLowerCase()} confidence. Evidence: ${pythonSkill.evidence.join(', ')}.` : 'Python is not yet part of your saved skill set. Add it and complete a project to improve your score.' });
+      }
+      if (message.includes('resume')) {
+        return sendJSON(200, { reply: `Your resume is ${state.resumes[authUser.id] ? 'uploaded and active' : 'missing'}; add measurable project outcomes and job-relevant keywords like Java, SQL, React, and REST API.` });
+      }
+      return sendJSON(200, { reply: `Your current skill profile includes: ${skills}. Focus on practical projects, assessments, and certificate evidence to strengthen your placement profile.` });
     }
     if (pathname === '/api/student/profile' && req.method === 'PUT') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
       const body = await parseJSON(req);
       state.studentProfiles[userId] = { ...(state.studentProfiles[userId] || {}), ...body };
-      return sendJSON(200, { success: true, profile: state.studentProfiles[userId] });
+      if (body.resume_url) state.studentProfiles[userId].resume_url = body.resume_url;
+      if (body.resume) state.resumes[userId] = { ...state.resumes[userId], ...body.resume };
+      return sendJSON(200, { success: true, profile: state.studentProfiles[userId], resume: state.resumes[userId] || null });
+    }
+    if (pathname === '/api/student/resume' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { resume: state.resumes[authUser.id] || null, resumeUrl: state.studentProfiles[authUser.id]?.resume_url || '' });
+    }
+    if (pathname === '/api/student/resume' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const resumeUrl = String(body.resumeUrl || body.fileUrl || '').trim();
+      const resumeName = String(body.resumeName || body.fileName || 'Resume.pdf').trim();
+      if (!resumeUrl) return sendJSON(400, { error: 'Resume URL or file is required.' });
+      const resume = {
+        file_name: resumeName,
+        upload_date: new Date().toISOString().slice(0, 10),
+        file_url: resumeUrl,
+        status: 'Verified & Active'
+      };
+      state.resumes[authUser.id] = resume;
+      state.studentProfiles[authUser.id] = { ...(state.studentProfiles[authUser.id] || {}), resume_url: resumeUrl };
+      return sendJSON(201, { success: true, resume });
+    }
+    if (pathname === '/api/student/onboarding' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req); const userId = authUser.id;
+      const profileFields = body.profile || {};
+      state.studentProfiles[userId] = { ...(state.studentProfiles[userId] || {}), ...profileFields, user_id: userId, student_id: authUser.student_id };
+      if (body.school) state.schoolEducation[userId] = { ...(state.schoolEducation[userId] || {}), ...body.school };
+      if (body.backlog) state.backlogs[userId] = { ...(state.backlogs[userId] || {}), ...body.backlog };
+      const gpaValues = Array.isArray(body.semesterGpa) ? body.semesterGpa : [];
+      state.academicRecords[userId] = gpaValues.map((gpa, index) => ({ id: `${userId}-${index + 1}`, semester: `Semester ${index + 1}`, gpa: gpa === '' || gpa === null ? null : Number(gpa), status: gpa === '' || gpa === null ? 'Not Completed' : 'Completed' })).filter(record => record.gpa !== null || record.semester);
+      state.studentProfiles[userId].cgpa = calculateCGPA(state.academicRecords[userId]);
+      state.userSkills[userId] = [];
+      for (const skill of (body.skills || [])) {
+        const name = String(skill.skillName || '').trim(); const level = Number(skill.proficiencyPercentage);
+        if (name && Number.isFinite(level) && level >= 0 && level <= 100) {
+          const existing = (state.userSkills[userId] || []).find(item => item.skill_name.toLowerCase() === name.toLowerCase());
+          if (existing) existing.level_pct = level;
+          else state.userSkills[userId].push({ id: Date.now() + state.userSkills[userId].length, skill_name: name, category: skill.category || 'Other', level_pct: level, scoreOutOfTen: Number((level / 10).toFixed(1)) });
+        }
+      }
+      state.preferences[userId] = { jobRoles: body.preferences?.jobRoles || [], industries: body.preferences?.industries || [], locations: body.preferences?.locations || [], opportunityTypes: body.preferences?.opportunityTypes || [] };
+      state.studentProfiles[userId].onboarding_complete = true;
+      state.settings[userId] = { ...(state.settings[userId] || {}), jobNotifications: true, internshipNotifications: true, campusDriveNotifications: true, applicationNotifications: true, interviewNotifications: true, placementNotifications: true, profileVisibility: 'public', recruiterDiscovery: true, showSkills: true, showAcademicInfo: true, showContactInfo: false, theme: 'system' };
+      return sendJSON(200, { success: true, profile: state.studentProfiles[userId], cgpa: state.studentProfiles[userId].cgpa });
     }
     if (pathname === '/api/student/academics' && req.method === 'GET') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
-      return sendJSON(200, { cgpa: 8.8, records: state.academicRecords[userId] || state.academicRecords[1], school: state.schoolEducation[userId] || state.schoolEducation[1], backlog: state.backlogs[userId] || state.backlogs[1] });
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
+      const records = state.academicRecords[userId] || [];
+      return sendJSON(200, { cgpa: calculateCGPA(records), records, school: state.schoolEducation[userId] || {}, backlog: state.backlogs[userId] || {} });
+    }
+    if ((pathname === '/api/student/academics' && req.method === 'PUT') || pathname === '/api/student/semester-gpa' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req); const userId = authUser.id;
+      if (pathname === '/api/student/semester-gpa') {
+        const semester = Number(body.semester); const gpa = Number(body.gpa);
+        if (!Number.isInteger(semester) || semester < 1 || semester > 8 || !Number.isFinite(gpa) || gpa < 0 || gpa > 10) return sendJSON(400, { error: 'Semester must be 1-8 and GPA must be between 0 and 10.' });
+        const records = state.academicRecords[userId] || [];
+        const existing = records.find(record => Number(record.semester) === semester || record.semester === `Semester ${semester}`);
+        if (existing) existing.gpa = gpa; else records.push({ id: Date.now(), semester: `Semester ${semester}`, gpa, status: 'Completed' });
+        state.academicRecords[userId] = records;
+      } else {
+        state.schoolEducation[userId] = { ...(state.schoolEducation[userId] || {}), ...(body.school || {}) };
+        state.backlogs[userId] = { ...(state.backlogs[userId] || {}), ...(body.backlog || {}) };
+      }
+      const records = state.academicRecords[userId] || [];
+      state.studentProfiles[userId] = { ...(state.studentProfiles[userId] || {}), cgpa: calculateCGPA(records) };
+      return sendJSON(200, { success: true, cgpa: calculateCGPA(records), records });
     }
     if (pathname === '/api/student/skills' && req.method === 'GET') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
-      return sendJSON(200, { technical: state.userSkills[userId] || state.userSkills[1], coding: state.codingSkills[userId] || state.codingSkills[1] });
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const skills = (state.userSkills[authUser.id] || []).map(skill => ({
+        ...skill,
+        skillName: skill.skill_name || skill.skillName,
+        scoreOutOfTen: Number((Number(skill.level_pct || 0) / 10).toFixed(1)),
+        proficiencyPercentage: Number(skill.level_pct || 0)
+      }));
+      return sendJSON(200, { technical: skills, coding: state.codingSkills[authUser.id] || {} });
+    }
+    if (pathname === '/api/student/skills' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req); const skillName = String(body.skillName || body.skill_name || '').trim(); const level = Number(body.proficiencyPercentage ?? body.proficiency ?? body.level_pct ?? 0);
+      if (!skillName || !Number.isFinite(level) || level < 0 || level > 100) return sendJSON(400, { error: 'Skill name and proficiency from 0 to 100 are required.' });
+      const skills = Array.isArray(state.userSkills[authUser.id]) ? state.userSkills[authUser.id] : [];
+      const existing = skills.find(skill => String(skill.skill_name || skill.skillName || '').toLowerCase() === skillName.toLowerCase());
+      if (existing) {
+        existing.level_pct = level;
+        existing.scoreOutOfTen = Number((level / 10).toFixed(1));
+        existing.category = body.category || existing.category || 'Other';
+        existing.skill_name = existing.skill_name || skillName;
+        return sendJSON(200, { success: true, message: 'Skill already exists. Updated successfully.', skills, duplicate: true });
+      }
+      const newSkill = { id: Date.now(), skill_name: skillName, category: body.category || 'Other', level_pct: level, scoreOutOfTen: Number((level / 10).toFixed(1)) };
+      skills.push(newSkill);
+      state.userSkills[authUser.id] = skills;
+      return sendJSON(201, { success: true, skills, duplicate: false });
+    }
+    if (pathname.match(/^\/api\/student\/skills\/\d+$/) && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const skill = (state.userSkills[authUser.id] || []).find(item => item.id === Number(pathname.split('/').pop()));
+      if (!skill) return sendJSON(404, { error: 'Skill not found.' });
+      const body = await parseJSON(req); const level = Number(body.proficiencyPercentage ?? body.proficiency ?? body.level_pct ?? skill.level_pct);
+      if (!Number.isFinite(level) || level < 0 || level > 100) return sendJSON(400, { error: 'Proficiency must be between 0 and 100.' });
+      skill.level_pct = level; skill.scoreOutOfTen = Number((level / 10).toFixed(1));
+      return sendJSON(200, { success: true, skill: { ...skill, scoreOutOfTen: skill.scoreOutOfTen } });
+    }
+    if (pathname.match(/^\/api\/student\/skills\/\d+$/) && req.method === 'DELETE') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const skills = state.userSkills[authUser.id] || []; state.userSkills[authUser.id] = skills.filter(skill => skill.id !== Number(pathname.split('/').pop()));
+      return sendJSON(200, { success: true });
+    }
+    if (pathname === '/api/student/preferences' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { preferences: state.preferences[authUser.id] || { jobRoles: [], industries: [], locations: [], opportunityTypes: [] } });
+    }
+    if (pathname === '/api/student/preferences' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      state.preferences[authUser.id] = { jobRoles: body.jobRoles || [], industries: body.industries || [], locations: body.locations || [], opportunityTypes: body.opportunityTypes || [] };
+      return sendJSON(200, { success: true, preferences: state.preferences[authUser.id] });
+    }
+    if (pathname === '/api/student/settings' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { settings: getStudentSettings(authUser.id), user: { username: authUser.username, email: authUser.email, mobile: state.studentProfiles[authUser.id]?.phone || '', studentId: authUser.student_id || state.studentProfiles[authUser.id]?.student_id } });
+    }
+    if (pathname === '/api/student/settings' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      state.settings[authUser.id] = { ...getStudentSettings(authUser.id), ...body };
+      return sendJSON(200, { success: true, settings: getStudentSettings(authUser.id) });
+    }
+    if (pathname === '/api/student/change-password' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const currentPassword = String(body.currentPassword || '');
+      const newPassword = String(body.newPassword || '');
+      const confirmPassword = String(body.confirmPassword || '');
+      if (!verifyPassword(currentPassword, authUser.salt, authUser.password_hash)) return sendJSON(400, { error: 'Current password is incorrect.' });
+      if (newPassword.length < 8) return sendJSON(400, { error: 'New password must be at least 8 characters.' });
+      if (newPassword !== confirmPassword) return sendJSON(400, { error: 'New password and confirmation do not match.' });
+      const credentials = hashPassword(newPassword);
+      const userIndex = state.users.findIndex(user => user.id === authUser.id);
+      if (userIndex !== -1) {
+        state.users[userIndex].password_hash = credentials.hash;
+        state.users[userIndex].salt = credentials.salt;
+      }
+      return sendJSON(200, { success: true, message: 'Password updated successfully.' });
+    }
+    if (pathname === '/api/student/account' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const email = String(body.email || authUser.email).trim();
+      const username = String(body.username || authUser.username).trim();
+      const mobile = String(body.mobile || state.studentProfiles[authUser.id]?.phone || '').trim();
+      if (email && state.users.some(user => user.id !== authUser.id && user.email.toLowerCase() === email.toLowerCase())) return sendJSON(409, { error: 'Email already in use.' });
+      if (username && state.users.some(user => user.id !== authUser.id && user.username.toLowerCase() === username.toLowerCase())) return sendJSON(409, { error: 'Username already in use.' });
+      const userIndex = state.users.findIndex(user => user.id === authUser.id);
+      if (userIndex !== -1) {
+        state.users[userIndex].email = email;
+        state.users[userIndex].username = username;
+      }
+      state.studentProfiles[authUser.id] = { ...(state.studentProfiles[authUser.id] || {}), email, phone: mobile, name: state.studentProfiles[authUser.id]?.name || authUser.username };
+      return sendJSON(200, { success: true, user: { ...state.users[userIndex], email, username }, profile: state.studentProfiles[authUser.id] });
+    }
+    if (pathname === '/api/student/placement' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { placement: state.placements[authUser.id] || null });
+    }
+    if (pathname === '/api/student/placement' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      if (!body.companyName || !body.role) return sendJSON(400, { error: 'Company name and role are required.' });
+      state.placements[authUser.id] = { id: Date.now(), studentId: authUser.id, ...body, updatedAt: new Date().toISOString() };
+      return sendJSON(201, { success: true, placement: state.placements[authUser.id] });
+    }
+    if (pathname === '/api/student/placement' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      if (!state.placements[authUser.id]) return sendJSON(404, { error: 'Placement record not found.' });
+      state.placements[authUser.id] = { ...state.placements[authUser.id], ...(await parseJSON(req)), updatedAt: new Date().toISOString() };
+      return sendJSON(200, { success: true, placement: state.placements[authUser.id] });
+    }
+    if (pathname === '/api/student/certificates' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { certificates: state.certificates[authUser.id] || [] });
+    }
+    if (pathname === '/api/student/certificates' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const certificate = {
+        id: Date.now(),
+        studentId: authUser.id,
+        certificateName: body.certificateName || body.name || 'Certificate',
+        issuer: body.issuer || 'Unknown',
+        issueDate: body.issueDate || new Date().toISOString().slice(0, 10),
+        credentialId: body.credentialId || '',
+        certificateUrl: body.certificateUrl || '',
+        fileUrl: body.fileUrl || '',
+        fileType: body.fileType || '',
+        relatedSkill: body.relatedSkill || '',
+        description: body.description || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      if (!certificate.fileUrl && !certificate.certificateUrl && !certificate.credentialUrl) return sendJSON(400, { error: 'Certificate file or URL is required.' });
+      const list = state.certificates[authUser.id] || [];
+      list.push(certificate);
+      state.certificates[authUser.id] = list;
+      return sendJSON(201, { success: true, certificate });
+    }
+    if (pathname.startsWith('/api/student/certificates/') && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const id = Number(pathname.split('/').pop());
+      const certs = state.certificates[authUser.id] || [];
+      const cert = certs.find(item => item.id === id);
+      if (!cert) return sendJSON(404, { error: 'Certificate not found.' });
+      const body = await parseJSON(req);
+      Object.assign(cert, body, { updatedAt: new Date().toISOString() });
+      return sendJSON(200, { success: true, certificate: cert });
+    }
+    if (pathname.startsWith('/api/student/certificates/') && req.method === 'DELETE') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const id = Number(pathname.split('/').pop());
+      const certs = state.certificates[authUser.id] || [];
+      const next = certs.filter(item => item.id !== id);
+      state.certificates[authUser.id] = next;
+      return sendJSON(200, { success: true, certificates: next });
+    }
+    if (pathname === '/api/student/projects' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { projects: state.projects[authUser.id] || [] });
+    }
+    if (pathname === '/api/student/projects' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      const project = {
+        id: Date.now(),
+        studentId: authUser.id,
+        title: body.title || 'Untitled Project',
+        description: body.description || '',
+        problemStatement: body.problemStatement || '',
+        category: body.category || 'Other',
+        technologies: body.technologies || '',
+        githubUrl: body.githubUrl || body.github_url || '',
+        liveDemoUrl: body.liveDemoUrl || body.live_url || '',
+        projectUrl: body.projectUrl || body.project_url || '',
+        role: body.role || '',
+        teamSize: body.teamSize || '',
+        startDate: body.startDate || '',
+        endDate: body.endDate || '',
+        status: body.status || 'Completed',
+        imageUrl: body.imageUrl || '',
+        outcome: body.outcome || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const list = state.projects[authUser.id] || [];
+      list.push(project);
+      state.projects[authUser.id] = list;
+      return sendJSON(201, { success: true, project });
+    }
+    if (pathname.startsWith('/api/student/projects/') && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const id = Number(pathname.split('/').pop());
+      const projects = state.projects[authUser.id] || [];
+      const project = projects.find(item => item.id === id);
+      if (!project) return sendJSON(404, { error: 'Project not found.' });
+      const body = await parseJSON(req);
+      Object.assign(project, body, { updatedAt: new Date().toISOString() });
+      return sendJSON(200, { success: true, project });
+    }
+    if (pathname.startsWith('/api/student/projects/') && req.method === 'DELETE') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const id = Number(pathname.split('/').pop());
+      const projects = state.projects[authUser.id] || [];
+      const next = projects.filter(item => item.id !== id);
+      state.projects[authUser.id] = next;
+      return sendJSON(200, { success: true, projects: next });
     }
     if (pathname === '/api/student/assessments' && req.method === 'GET') {
       const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
@@ -490,27 +1161,104 @@ const server = http.createServer(async (req, res) => {
       const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
       return sendJSON(200, { projects: state.projects[userId] || state.projects[1], internships: state.internships[userId] || state.internships[1], certifications: state.certifications[userId] || state.certifications[1], seminars: state.seminars[userId] || state.seminars[1], workshops: state.workshops[userId] || state.workshops[1], hackathons: state.hackathons[userId] || state.hackathons[1], achievements: state.achievements[userId] || state.achievements[1] });
     }
-    if (pathname === '/api/opportunities' && req.method === 'GET') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
+    if ((pathname === '/api/opportunities' || pathname === '/api/student/jobs') && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
       return sendJSON(200, state.jobs.map(j => {
         const comp = state.companies.find(c => c.companyId === j.companyId) || state.companies[0];
         const match = calculateCompanyMatch(userId, comp);
         return { ...j, match_percentage: match.matchPercentage, is_eligible: match.isEligible };
       }));
     }
+    if (pathname.match(/^\/api\/student\/jobs\/\d+$/) && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const job = state.jobs.find(item => item.id === Number(pathname.split('/').pop()));
+      if (!job) return sendJSON(404, { error: 'Job not found.' });
+      const company = state.companies.find(item => item.companyId === job.companyId) || state.companies[0];
+      const match = calculateCompanyMatch(authUser.id, company);
+      return sendJSON(200, { ...job, ...match, eligibility: match.isEligible });
+    }
     if (pathname === '/api/student/apply' && req.method === 'POST') {
-      const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
       const { jobId } = await parseJSON(req);
       const targetJob = state.jobs.find(j => j.id === Number(jobId)) || state.jobs[0];
-      const newApp = { id: nextAppId(), student_id: userId, job_id: targetJob.id, companyId: targetJob.companyId || 'CMP-10001', company_name: targetJob.company_name, job_title: targetJob.title, candidate_name: 'Arjun Sharma', cgpa: 8.8, applied_at: new Date().toISOString().split('T')[0], status: 'Applied', last_updated: new Date().toISOString().split('T')[0], next_step: 'Application under recruiter review.' };
+      const company = state.companies.find(item => item.companyId === targetJob.companyId) || state.companies[0];
+      const match = calculateCompanyMatch(userId, company);
+      if (!match.isEligible) return sendJSON(403, { error: 'You do not meet this opportunity\'s eligibility requirements.' });
+      if (state.applications.some(application => application.student_id === userId && application.job_id === targetJob.id)) return sendJSON(409, { error: 'You have already applied for this opportunity.' });
+      const profile = state.studentProfiles[userId] || {};
+      const newApp = { id: nextAppId(), student_id: userId, job_id: targetJob.id, companyId: targetJob.companyId || 'CMP-10001', company_name: targetJob.company_name, job_title: targetJob.title, candidate_name: profile.name || 'Student', cgpa: profile.cgpa, match_percentage: match.matchPercentage, applied_at: new Date().toISOString().split('T')[0], status: 'Applied', last_updated: new Date().toISOString().split('T')[0], next_step: 'Application under recruiter review.' };
       state.applications.unshift(newApp);
       return sendJSON(201, { success: true, application: newApp });
     }
     if (pathname === '/api/student/applications' && req.method === 'GET') {
-      return sendJSON(200, state.applications);
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, state.applications.filter(application => application.student_id === authUser.id));
     }
     if (pathname === '/api/student/notifications' && req.method === 'GET') {
-      return sendJSON(200, state.notifications[1] || []);
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const notifications = state.notifications[authUser.id] || [];
+      return sendJSON(200, notifications);
+    }
+    if (pathname.match(/^\/api\/student\/notifications\/\d+\/read$/) && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const notification = (state.notifications[authUser.id] || []).find(item => item.id === Number(pathname.split('/')[4]));
+      if (!notification) return sendJSON(404, { error: 'Notification not found.' });
+      notification.is_read = true;
+      return sendJSON(200, { success: true, notification });
+    }
+    if (pathname === '/api/student/cgpa' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, { cgpa: calculateCGPA(state.academicRecords[authUser.id] || []) });
+    }
+    if (pathname === '/api/student/matches' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      return sendJSON(200, state.jobs.map(job => {
+        const company = state.companies.find(item => item.companyId === job.companyId) || state.companies[0];
+        const match = calculateCompanyMatch(authUser.id, company);
+        return { job, ...match, eligibility: match.isEligible };
+      }));
+    }
+    if (pathname.match(/^\/api\/student\/campus-drives\/\d+$/) && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const drive = (state.campusDrives || []).find(item => item.id === Number(pathname.split('/').pop()));
+      if (!drive) return sendJSON(404, { error: 'Campus drive not found.' });
+      return sendJSON(200, drive);
+    }
+    if (pathname === '/api/student/campus-drives' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const profile = state.studentProfiles[authUser.id] || {};
+      const skills = state.userSkills[authUser.id] || [];
+      const drives = (state.campusDrives || []).map(drive => {
+        const reasons = [];
+        if (drive.minimumCGPA && (profile.cgpa === null || Number(profile.cgpa || 0) < drive.minimumCGPA)) reasons.push(`CGPA must be at least ${drive.minimumCGPA}`);
+        if (drive.department && profile.department && drive.department.toLowerCase() !== profile.department.toLowerCase()) reasons.push('Department does not match');
+        const missingSkills = (drive.requiredSkills || []).filter(required => !skills.some(skill => skill.skill_name.toLowerCase() === required.skillName.toLowerCase() && Number(skill.level_pct) >= Number(required.minimumPercentage)));
+        if (missingSkills.length) reasons.push(`Required skills: ${missingSkills.map(skill => skill.skillName).join(', ')}`);
+        return { ...drive, eligible: reasons.length === 0, reason: reasons.join('; ') || 'You meet all eligibility requirements.', registered: Boolean(drive.registrations?.includes(authUser.id)) };
+      });
+      return sendJSON(200, drives);
+    }
+    if (pathname.match(/^\/api\/student\/campus-drives\/\d+\/register$/) && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const drive = (state.campusDrives || []).find(item => item.id === Number(pathname.split('/')[4]));
+      if (!drive) return sendJSON(404, { error: 'Campus drive not found.' });
+      const profile = state.studentProfiles[authUser.id] || {};
+      if (Number(profile.cgpa || 0) < Number(drive.minimumCGPA || 0)) return sendJSON(403, { error: 'You are not eligible for this drive.' });
+      drive.registrations = Array.from(new Set([...(drive.registrations || []), authUser.id]));
+      return sendJSON(200, { success: true, registered: true });
     }
 
     // UNIQUE AI ENGINES
@@ -549,6 +1297,13 @@ const server = http.createServer(async (req, res) => {
 
       const newJob = { id: nextJobId(), company_id: comp.id, companyId: comp.companyId, company_name: comp.name, title: body.title, location: body.location || 'Remote', salary_stipend: body.salary_stipend || '₹ 12,00,000 P.A.', required_skills: (body.required_skills || 'Java,SQL').split(','), min_cgpa: Number(body.min_cgpa || 7.5), deadline: body.deadline || '2026-11-30' };
       state.jobs.unshift(newJob);
+      state.users.filter(user => user.role === 'student').forEach(student => {
+        const match = calculateCompanyMatch(student.id, comp);
+        if (match.isEligible) {
+          if (!state.notifications[student.id]) state.notifications[student.id] = [];
+          state.notifications[student.id].unshift({ id: Date.now() + student.id, type: 'job-match', title: `New Job Match: ${newJob.title}`, message: `${comp.name} matches your profile at ${match.matchPercentage}%.`, jobId: newJob.id, is_read: false, created_at: new Date().toISOString() });
+        }
+      });
       return sendJSON(201, { success: true, job: newJob });
     }
 

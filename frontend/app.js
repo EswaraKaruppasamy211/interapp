@@ -1,6 +1,6 @@
 // SkillBridge — Enforced Security Client Engine for Student, Company & College Modules
 
-const API_BASE = 'https://interview-wc6b.onrender.com/api';
+const API_BASE = '/api';
 
 let currentUser = null;
 let currentProfile = null;
@@ -59,6 +59,7 @@ function showAppWorkspace() {
   document.getElementById('user-display-id').textContent = currentUser.role === 'company' ? `COMPANY (${currentUser.companyId || 'CMP-10001'})` : (currentUser.role === 'college' ? 'UNIVERSITY ADMIN' : (currentProfile ? currentProfile.student_id : 'STUDENT'));
 
   renderPortalState(currentRole);
+  if (currentRole === 'student' && currentProfile && currentProfile.onboarding_complete === false) navigateTo('profile');
 }
 
 // ENFORCED SECURITY PORTAL SWITCHER & ROUTE GUARDS
@@ -104,6 +105,9 @@ function navigateToRoleHome() {
 }
 
 function navigateTo(viewId) {
+  if (viewId === 'dashboard' && currentRole === 'student' && currentProfile && currentProfile.onboarding_complete === false) {
+    viewId = 'profile';
+  }
   closeMobileDrawer();
 
   document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
@@ -124,6 +128,8 @@ function navigateTo(viewId) {
   else if (viewId === 'opportunities') loadOpportunitiesView();
   else if (viewId === 'applications') loadApplicationsView();
   else if (viewId === 'notifications') loadNotificationsView();
+  else if (viewId === 'campus-drives') loadCampusDrivesView();
+  else if (viewId === 'placement') loadPlacementView();
   else if (viewId === 'company-dashboard') loadCompanyATSPipeline();
   else if (viewId === 'talent-finder') loadTalentFinder();
   else if (viewId === 'college-dashboard') loadCollegeDashboard();
@@ -177,22 +183,27 @@ async function handleStudentLoginSubmit(e) {
 async function handleStudentRegisterSubmit(e) {
   e.preventDefault();
   const fullName = document.getElementById('stu-reg-name').value.trim();
+  const username = document.getElementById('stu-reg-username').value.trim();
   const email = document.getElementById('stu-reg-email').value.trim();
   const mobile = document.getElementById('stu-reg-mobile').value.trim();
-  const studentId = document.getElementById('stu-reg-id').value.trim();
   const password = document.getElementById('stu-reg-pass').value.trim();
+  const confirmPassword = document.getElementById('stu-reg-confirm-pass').value.trim();
+  const passwordError = document.getElementById('stu-reg-password-error');
+
+  passwordError.classList.toggle('hidden', password === confirmPassword);
+  if (password !== confirmPassword) return;
 
   try {
     const data = await apiFetch('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ fullName, email, mobile, studentId, password, role: 'student' })
+      body: JSON.stringify({ fullName, username, email, mobile, password, confirmPassword, role: 'student' })
     });
     authToken = data.token;
     localStorage.setItem('sb_token', authToken);
     currentUser = data.user;
     currentProfile = data.profile;
     closeModal('student-auth-modal');
-    alert('Student Account Registered Successfully!');
+    alert(`Account created. Your Student ID is ${data.studentId}. Complete your profile to continue.`);
     switchPortalRole('student');
     showAppWorkspace();
   } catch (err) {
@@ -339,12 +350,14 @@ async function handleCollegeRegisterSubmit(e) {
 async function loadDashboardHome() {
   try {
     const data = await apiFetch('/student/profile');
+    currentProfile = data.profile;
+    document.getElementById('welcome-header').textContent = `Welcome back, ${currentProfile.name || 'Student'}`;
     const completion = data.completion || { percentage: 80, missingItems: [] };
     document.getElementById('dash-profile-pct').textContent = `${completion.percentage}%`;
     document.getElementById('dash-profile-bar').style.width = `${completion.percentage}%`;
 
     const acad = await apiFetch('/student/academics');
-    document.getElementById('stat-cgpa').textContent = Number(acad.cgpa).toFixed(2);
+    document.getElementById('stat-cgpa').textContent = acad.cgpa === null ? 'Not available' : Number(acad.cgpa).toFixed(2);
 
     const opps = await apiFetch('/opportunities');
     const recContainer = document.getElementById('dash-recommended-jobs');
@@ -366,20 +379,60 @@ async function loadProfileView() {
     document.getElementById('prof-name').value = p.name || '';
     document.getElementById('prof-phone').value = p.phone || '';
     document.getElementById('prof-college').value = p.college || '';
+    ['university','department','degree','city','state','country','pincode'].forEach(field => { const el = document.getElementById(`prof-${field}`); if (el) el.value = p[field] || ''; });
+    document.getElementById('prof-dob').value = p.dateOfBirth || '';
+    document.getElementById('prof-gender').value = p.gender || '';
+    document.getElementById('prof-graduation').value = p.graduationYear || '';
+    const acad = await apiFetch('/student/academics');
+    const bySemester = Object.fromEntries((acad.records || []).map(record => [record.semester, record.gpa]));
+    const fields = document.getElementById('onboarding-gpa-fields');
+    fields.innerHTML = Array.from({ length: 8 }, (_, index) => `<div><label class="block text-xs font-bold mb-1">Semester ${index + 1}</label><input type="number" min="0" max="10" step="0.01" class="saas-input onboarding-gpa" data-semester="${index + 1}" value="${bySemester[`Semester ${index + 1}`] ?? ''}" /></div>`).join('');
+    fields.querySelectorAll('.onboarding-gpa').forEach(input => input.addEventListener('input', updateOnboardingCGPA));
+    updateOnboardingCGPA();
+    const pref = await apiFetch('/student/preferences');
+    document.getElementById('onboarding-roles').value = (pref.preferences.jobRoles || []).join(', ');
+    document.getElementById('onboarding-type').value = (pref.preferences.opportunityTypes || [])[0] || '';
+    document.getElementById('onboarding-resume').value = p.resume_url || '';
+    const skills = await apiFetch('/student/skills');
+    document.getElementById('onboarding-skills').value = (skills.technical || []).map(s => `${s.skill_name}:${s.level_pct}`).join(', ');
   } catch (e) {}
 }
-async function handleSaveProfile(e) { e.preventDefault(); alert('Profile updated!'); }
+function updateOnboardingCGPA() {
+  const values = [...document.querySelectorAll('.onboarding-gpa')].map(input => input.value).filter(value => value !== '').map(Number).filter(inputValueIsPresent);
+  const element = document.getElementById('onboarding-cgpa');
+  element.textContent = values.length ? `Current CGPA: ${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)}` : 'Enter semester GPA to calculate CGPA';
+}
+function inputValueIsPresent(value) { return Number.isFinite(value) && value >= 0; }
+async function handleSaveProfile(e) {
+  e.preventDefault();
+  try {
+    const skills = document.getElementById('onboarding-skills').value.split(',').map(item => { const [skillName, proficiencyPercentage] = item.split(':'); return { skillName: (skillName || '').trim(), proficiencyPercentage: Number(proficiencyPercentage), category: 'Other' }; }).filter(skill => skill.skillName && Number.isFinite(skill.proficiencyPercentage));
+    const semesterGpa = [...document.querySelectorAll('.onboarding-gpa')].map(input => input.value === '' ? null : Number(input.value));
+    const data = await apiFetch('/student/onboarding', {
+      method: 'POST',
+      body: JSON.stringify({
+        profile: { name: document.getElementById('prof-name').value.trim(), phone: document.getElementById('prof-phone').value.trim(), college: document.getElementById('prof-college').value.trim(), university: document.getElementById('prof-university').value.trim(), department: document.getElementById('prof-department').value.trim(), degree: document.getElementById('prof-degree').value.trim(), dateOfBirth: document.getElementById('prof-dob').value, gender: document.getElementById('prof-gender').value, graduationYear: Number(document.getElementById('prof-graduation').value), city: document.getElementById('prof-city').value.trim(), state: document.getElementById('prof-state').value.trim(), country: document.getElementById('prof-country').value.trim(), pincode: document.getElementById('prof-pincode').value.trim(), resume_url: document.getElementById('onboarding-resume').value.trim() },
+        semesterGpa, skills,
+        preferences: { jobRoles: document.getElementById('onboarding-roles').value.split(',').map(value => value.trim()).filter(Boolean), opportunityTypes: [document.getElementById('onboarding-type').value] }
+      })
+    });
+    currentProfile = data.profile;
+    alert('Profile saved. Welcome to your dashboard!');
+    navigateTo('dashboard');
+  } catch (err) { alert(err.message || 'Profile update failed.'); }
+}
 async function loadAcademicsView() {
   try {
     const data = await apiFetch('/student/academics');
     const tbody = document.getElementById('semester-table-body');
-    tbody.innerHTML = (data.records || []).map(r => `<tr><td style="font-weight:700;">${r.semester}</td><td>${r.gpa.toFixed(2)}</td><td><span class="badge-saas badge-emerald">${r.status}</span></td></tr>`).join('');
+    const records = Object.fromEntries((data.records || []).map(record => [record.semester, record]));
+    tbody.innerHTML = Array.from({ length: 8 }, (_, index) => { const record = records[`Semester ${index + 1}`]; return `<tr><td style="font-weight:700;">Semester ${index + 1}</td><td>${record && record.gpa !== null ? Number(record.gpa).toFixed(2) : 'Not Completed'}</td><td><span class="badge-saas ${record && record.gpa !== null ? 'badge-emerald' : 'badge-blue'}">${record && record.gpa !== null ? 'Completed' : 'Not Completed'}</span></td></tr>`; }).join('');
   } catch (e) {}
 }
 async function loadSkillsView() {
   try {
     const data = await apiFetch('/student/skills');
-    document.getElementById('technical-skills-list').innerHTML = (data.technical || []).map(s => `<div class="flex-between"><span>${s.skill_name}</span> <span class="badge-saas badge-purple">${s.proficiency}</span></div>`).join('');
+    document.getElementById('technical-skills-list').innerHTML = (data.technical || []).map(s => `<div class="flex-between"><span>${s.skill_name}</span> <span class="badge-saas badge-purple">${s.level_pct}% · ${s.scoreOutOfTen}/10</span></div>`).join('');
   } catch (e) {}
 }
 async function loadAssessmentsView() {
@@ -425,6 +478,27 @@ async function loadNotificationsView() {
     const list = await apiFetch('/student/notifications');
     document.getElementById('notifications-list-container').innerHTML = list.map(n => `<div class="saas-card mb-3"><h4 style="font-weight:700;">${n.title}</h4><p style="font-size:0.85rem; color:var(--text-muted);">${n.message}</p></div>`).join('');
   } catch (e) {}
+}
+async function loadCampusDrivesView() {
+  try {
+    const drives = await apiFetch('/student/campus-drives');
+    document.getElementById('campus-drives-list').innerHTML = drives.length ? drives.map(drive => `<div class="saas-card mb-3"><div class="flex-between"><div><h3>${drive.company}</h3><p>${drive.role} · ${drive.location}</p></div><span class="badge-saas ${drive.eligible ? 'badge-emerald' : 'badge-red'}">${drive.eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}</span></div><p class="text-xs mt-2">Drive: ${drive.date} · Deadline: ${drive.deadline} · ${drive.salary}</p><p class="text-xs mt-2" style="color:var(--text-muted);">${drive.reason}</p>${drive.eligible && !drive.registered ? `<button class="btn-saas btn-primary mt-3" onclick="registerForDrive(${drive.id})">Register</button>` : drive.registered ? '<span class="badge-saas badge-emerald mt-3">Registered</span>' : ''}</div>`).join('') : '<div class="saas-card">No campus drives are available.</div>';
+  } catch (e) { document.getElementById('campus-drives-list').innerHTML = '<div class="saas-card">Unable to load campus drives.</div>'; }
+}
+async function registerForDrive(driveId) {
+  try { await apiFetch(`/student/campus-drives/${driveId}/register`, { method: 'POST' }); alert('Registered for the campus drive.'); loadCampusDrivesView(); } catch (err) { alert(err.message); }
+}
+async function loadPlacementView() {
+  try {
+    const data = await apiFetch('/student/placement');
+    const placement = data.placement;
+    document.getElementById('placement-current').innerHTML = placement ? `<div class="badge-saas badge-emerald">${placement.status || 'Placed'}</div><h3 class="mt-2">${placement.companyName} · ${placement.role}</h3><p>${placement.package || ''} ${placement.location || ''}</p>` : '<p style="color:var(--text-muted);">No placement recorded yet.</p>';
+    if (placement) ['company','role','department','package','location'].forEach(field => { const element = document.getElementById(`placement-${field}`); if (element) element.value = placement[field === 'company' ? 'companyName' : field] || ''; });
+  } catch (e) {}
+}
+async function handleSavePlacement(e) {
+  e.preventDefault();
+  try { await apiFetch('/student/placement', { method: 'POST', body: JSON.stringify({ companyName: document.getElementById('placement-company').value.trim(), role: document.getElementById('placement-role').value.trim(), department: document.getElementById('placement-department').value.trim(), package: document.getElementById('placement-package').value.trim(), placementDate: document.getElementById('placement-date').value, joiningDate: document.getElementById('placement-joining').value, location: document.getElementById('placement-location').value.trim(), placementType: document.getElementById('placement-type').value, status: 'Placed' }) }); alert('Placement saved.'); loadPlacementView(); } catch (err) { alert(err.message); }
 }
 
 // COMPANY RECRUITER LOADERS

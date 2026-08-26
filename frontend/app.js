@@ -130,6 +130,7 @@ function navigateTo(viewId) {
   else if (viewId === 'notifications') loadNotificationsView();
   else if (viewId === 'campus-drives') loadCampusDrivesView();
   else if (viewId === 'placement') loadPlacementView();
+  else if (viewId === 'settings') loadSettingsView();
   else if (viewId === 'company-dashboard') loadCompanyATSPipeline();
   else if (viewId === 'talent-finder') loadTalentFinder();
   else if (viewId === 'college-dashboard') loadCollegeDashboard();
@@ -357,6 +358,9 @@ async function loadDashboardHome() {
     document.getElementById('dash-profile-bar').style.width = `${completion.percentage}%`;
 
     const acad = await apiFetch('/student/academics');
+    document.getElementById('school-tenth').value = acad.school?.tenth_percentage ?? '';
+    document.getElementById('school-twelfth').value = acad.school?.twelfth_percentage ?? '';
+    document.getElementById('backlogs-count').value = acad.backlog?.current_backlogs ?? 0;
     document.getElementById('stat-cgpa').textContent = acad.cgpa === null ? 'Not available' : Number(acad.cgpa).toFixed(2);
 
     const opps = await apiFetch('/opportunities');
@@ -377,9 +381,11 @@ async function loadProfileView() {
     const data = await apiFetch('/student/profile');
     const p = data.profile || {};
     document.getElementById('prof-name').value = p.name || '';
+    document.getElementById('prof-student-id').value = p.student_id || currentUser.student_id || '';
     document.getElementById('prof-phone').value = p.phone || '';
     document.getElementById('prof-college').value = p.college || '';
     ['university','department','degree','city','state','country','pincode'].forEach(field => { const el = document.getElementById(`prof-${field}`); if (el) el.value = p[field] || ''; });
+    ['doorHouse','street','area','district'].forEach(field => { const el = document.getElementById(`prof-${field.replace(/[A-Z]/g, value => `-${value.toLowerCase()}`)}`); if (el) el.value = p.address?.[field] || ''; });
     document.getElementById('prof-dob').value = p.dateOfBirth || '';
     document.getElementById('prof-gender').value = p.gender || '';
     document.getElementById('prof-graduation').value = p.graduationYear || '';
@@ -391,6 +397,8 @@ async function loadProfileView() {
     updateOnboardingCGPA();
     const pref = await apiFetch('/student/preferences');
     document.getElementById('onboarding-roles').value = (pref.preferences.jobRoles || []).join(', ');
+    document.getElementById('onboarding-industries').value = (pref.preferences.industries || []).join(', ');
+    document.getElementById('onboarding-locations').value = (pref.preferences.locations || []).join(', ');
     document.getElementById('onboarding-type').value = (pref.preferences.opportunityTypes || [])[0] || '';
     document.getElementById('onboarding-resume').value = p.resume_url || '';
     const skills = await apiFetch('/student/skills');
@@ -411,9 +419,11 @@ async function handleSaveProfile(e) {
     const data = await apiFetch('/student/onboarding', {
       method: 'POST',
       body: JSON.stringify({
-        profile: { name: document.getElementById('prof-name').value.trim(), phone: document.getElementById('prof-phone').value.trim(), college: document.getElementById('prof-college').value.trim(), university: document.getElementById('prof-university').value.trim(), department: document.getElementById('prof-department').value.trim(), degree: document.getElementById('prof-degree').value.trim(), dateOfBirth: document.getElementById('prof-dob').value, gender: document.getElementById('prof-gender').value, graduationYear: Number(document.getElementById('prof-graduation').value), city: document.getElementById('prof-city').value.trim(), state: document.getElementById('prof-state').value.trim(), country: document.getElementById('prof-country').value.trim(), pincode: document.getElementById('prof-pincode').value.trim(), resume_url: document.getElementById('onboarding-resume').value.trim() },
+        profile: { name: document.getElementById('prof-name').value.trim(), phone: document.getElementById('prof-phone').value.trim(), college: document.getElementById('prof-college').value.trim(), university: document.getElementById('prof-university').value.trim(), department: document.getElementById('prof-department').value.trim(), degree: document.getElementById('prof-degree').value.trim(), dateOfBirth: document.getElementById('prof-dob').value, gender: document.getElementById('prof-gender').value, graduationYear: Number(document.getElementById('prof-graduation').value), city: document.getElementById('prof-city').value.trim(), state: document.getElementById('prof-state').value.trim(), country: document.getElementById('prof-country').value.trim(), pincode: document.getElementById('prof-pincode').value.trim(), address: { doorHouse: document.getElementById('prof-door-house').value.trim(), street: document.getElementById('prof-street').value.trim(), area: document.getElementById('prof-area').value.trim(), city: document.getElementById('prof-city').value.trim(), district: document.getElementById('prof-district').value.trim(), state: document.getElementById('prof-state').value.trim(), pincode: document.getElementById('prof-pincode').value.trim() }, resume_url: document.getElementById('onboarding-resume').value.trim() },
+        school: { tenth_percentage: Number(document.getElementById('school-tenth').value) || null, twelfth_percentage: Number(document.getElementById('school-twelfth').value) || null },
+        backlog: { current_backlogs: Number(document.getElementById('backlogs-count').value) || 0 },
         semesterGpa, skills,
-        preferences: { jobRoles: document.getElementById('onboarding-roles').value.split(',').map(value => value.trim()).filter(Boolean), opportunityTypes: [document.getElementById('onboarding-type').value] }
+        preferences: { jobRoles: document.getElementById('onboarding-roles').value.split(',').map(value => value.trim()).filter(Boolean), industries: document.getElementById('onboarding-industries').value.split(',').map(value => value.trim()).filter(Boolean), locations: document.getElementById('onboarding-locations').value.split(',').map(value => value.trim()).filter(Boolean), opportunityTypes: [document.getElementById('onboarding-type').value] }
       })
     });
     currentProfile = data.profile;
@@ -426,15 +436,22 @@ async function loadAcademicsView() {
     const data = await apiFetch('/student/academics');
     const tbody = document.getElementById('semester-table-body');
     const records = Object.fromEntries((data.records || []).map(record => [record.semester, record]));
-    tbody.innerHTML = Array.from({ length: 8 }, (_, index) => { const record = records[`Semester ${index + 1}`]; return `<tr><td style="font-weight:700;">Semester ${index + 1}</td><td>${record && record.gpa !== null ? Number(record.gpa).toFixed(2) : 'Not Completed'}</td><td><span class="badge-saas ${record && record.gpa !== null ? 'badge-emerald' : 'badge-blue'}">${record && record.gpa !== null ? 'Completed' : 'Not Completed'}</span></td></tr>`; }).join('');
+    document.getElementById('academic-tenth').value = data.school?.tenth_percentage ?? '';
+    document.getElementById('academic-twelfth').value = data.school?.twelfth_percentage ?? '';
+    document.getElementById('academic-backlogs').value = data.backlog?.current_backlogs ?? 0;
+    tbody.innerHTML = Array.from({ length: 8 }, (_, index) => { const record = records[`Semester ${index + 1}`]; return `<tr><td style="font-weight:700;">Semester ${index + 1}</td><td><input class="saas-input semester-edit" data-semester="${index + 1}" type="number" min="0" max="10" step="0.01" value="${record?.gpa ?? ''}" oninput="updateAcademicCGPA()"></td><td>${record?.gpa !== null && record?.gpa !== undefined ? 'Completed' : 'Not Completed'}</td></tr>`; }).join('');
+    updateAcademicCGPA();
   } catch (e) {}
 }
+function updateAcademicCGPA() { const values = [...document.querySelectorAll('.semester-edit')].map(input => Number(input.value)).filter(value => Number.isFinite(value) && value >= 0); const target = document.getElementById('academic-cgpa'); if (target) target.textContent = values.length ? `Calculated CGPA: ${(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)}` : 'Calculated CGPA: Not available'; }
+async function saveAcademicSummary() { try { const semesterGpa = [...document.querySelectorAll('.semester-edit')].map(input => input.value === '' ? null : Number(input.value)); await apiFetch('/student/academics', { method: 'PUT', body: JSON.stringify({ semesterGpa, school: { tenth_percentage: Number(document.getElementById('academic-tenth').value) || null, twelfth_percentage: Number(document.getElementById('academic-twelfth').value) || null }, backlog: { current_backlogs: Number(document.getElementById('academic-backlogs').value) || 0 } }) }); alert('Academic record saved.'); loadAcademicsView(); } catch (err) { alert(err.message); } }
 async function loadSkillsView() {
   try {
     const data = await apiFetch('/student/skills');
     document.getElementById('technical-skills-list').innerHTML = (data.technical || []).map(s => `<div class="flex-between"><span>${s.skill_name}</span> <span class="badge-saas badge-purple">${s.level_pct}% · ${s.scoreOutOfTen}/10</span></div>`).join('');
   } catch (e) {}
 }
+async function handleSkillSubmit(event) { event.preventDefault(); try { const data = await apiFetch('/student/skills', { method: 'POST', body: JSON.stringify({ skillName: document.getElementById('skill-entry-name').value, category: document.getElementById('skill-entry-category').value, proficiencyPercentage: Number(document.getElementById('skill-entry-percent').value) }) }); if (data.duplicate) alert(`${document.getElementById('skill-entry-name').value} already exists in your skills. It was updated.`); else alert('Skill added.'); event.target.reset(); loadSkillsView(); } catch (err) { alert(err.message); } }
 async function loadAssessmentsView() {
   try {
     const data = await apiFetch('/student/assessments');
@@ -445,13 +462,19 @@ async function loadAssessmentsView() {
 async function loadPortfolioView() {
   try {
     const data = await apiFetch('/student/portfolio');
-    document.getElementById('portfolio-tab-content').innerHTML = (data.projects || []).map(p => `<div class="saas-card mb-3"><h4 style="font-weight:700;">${p.title}</h4><p style="font-size:0.85rem; color:var(--text-muted);">${p.description}</p></div>`).join('');
+    const projects = (data.projects || []).map(p => `<div class="saas-card mb-3"><h4 style="font-weight:700;">${p.title}</h4><p style="font-size:0.85rem; color:var(--text-muted);">${p.description}</p></div>`).join('');
+    const certificates = (data.certificates || []).map(cert => `<div class="saas-card mb-3 flex-between"><div><h4>${cert.certificateName || cert.name}</h4><p class="text-xs">${cert.category || 'Other'} · ${cert.issuer || ''} · ${cert.issueDate || ''}</p></div><div>${cert.certificateUrl ? `<a class="btn-saas btn-outline" href="${cert.certificateUrl}" target="_blank" rel="noreferrer">View</a>` : ''}<button class="btn-saas btn-outline" onclick="deleteCertificate(${cert.id})">Delete</button></div></div>`).join('');
+    const achievements = (data.achievements || []).map(item => `<div class="saas-card mb-3"><h4>${item.title || 'Achievement'}</h4><p class="text-xs">${item.organization || ''} · ${item.date || ''}</p></div>`).join('');
+    document.getElementById('portfolio-tab-content').innerHTML = `<h2 class="mb-3">Projects</h2>${projects || '<p class="mb-4">No projects recorded.</p>'}<h2 class="mb-3">Certificates</h2>${certificates || '<p class="mb-4">No certificates recorded.</p>'}<h2 class="mb-3">Achievements</h2>${achievements || '<p>No achievements recorded.</p>'}`;
   } catch (e) {}
 }
+async function handleCertificateSubmit(event) { event.preventDefault(); try { await apiFetch('/student/certificates', { method: 'POST', body: JSON.stringify({ certificateName: document.getElementById('certificate-name').value.trim(), category: document.getElementById('certificate-category').value, issuer: document.getElementById('certificate-issuer').value.trim(), issueDate: document.getElementById('certificate-date').value, credentialId: document.getElementById('certificate-credential').value.trim(), certificateUrl: document.getElementById('certificate-url').value.trim() }) }); event.target.reset(); alert('Certificate saved.'); loadPortfolioView(); } catch (err) { alert(err.message); } }
+async function deleteCertificate(id) { if (!window.confirm('Are you sure you want to delete this certificate?')) return; try { await apiFetch(`/student/certificates/${id}`, { method: 'DELETE' }); loadPortfolioView(); } catch (err) { alert(err.message); } }
 async function loadAISkillAnalyzerView() {
   try {
-    const data = await apiFetch('/ai/company/1');
+    const data = await apiFetch('/student/jobs/101');
     document.getElementById('ai-match-pct').textContent = `${data.matchPercentage}% Match`;
+    document.getElementById('ai-match-pct').insertAdjacentHTML('afterend', `<p class="mt-2">${data.recommendationLevel}</p><p class="text-xs mt-2">${data.nonGuarantee}</p><table class="saas-table mt-3"><thead><tr><th>Skill</th><th>Required</th><th>Student</th><th>Result</th></tr></thead><tbody>${(data.skillGaps || []).map(item => `<tr><td>${item.skill}</td><td>${item.reqLevel}</td><td>${item.studentLevel}</td><td>${item.result === 'Match' ? '✓ Match' : '⚠ Gap'}</td></tr>`).join('')}</tbody></table>`);
   } catch (e) {}
 }
 async function loadOpportunitiesView() {
@@ -500,6 +523,23 @@ async function handleSavePlacement(e) {
   e.preventDefault();
   try { await apiFetch('/student/placement', { method: 'POST', body: JSON.stringify({ companyName: document.getElementById('placement-company').value.trim(), role: document.getElementById('placement-role').value.trim(), department: document.getElementById('placement-department').value.trim(), package: document.getElementById('placement-package').value.trim(), placementDate: document.getElementById('placement-date').value, joiningDate: document.getElementById('placement-joining').value, location: document.getElementById('placement-location').value.trim(), placementType: document.getElementById('placement-type').value, status: 'Placed' }) }); alert('Placement saved.'); loadPlacementView(); } catch (err) { alert(err.message); }
 }
+
+async function loadSettingsView() {
+  try {
+    const data = await apiFetch('/student/settings');
+    document.getElementById('setting-username').value = data.user.username || '';
+    document.getElementById('setting-email').value = data.user.email || '';
+    document.getElementById('setting-mobile').value = data.user.mobile || '';
+    document.getElementById('setting-student-id').value = data.user.studentId || '';
+    const fields = [['jobNotifications', 'Job Match'], ['internshipNotifications', 'Internship'], ['campusDriveNotifications', 'Campus Drive'], ['applicationNotifications', 'Application Updates'], ['interviewNotifications', 'Interview Updates'], ['placementNotifications', 'Placement Updates'], ['recruiterDiscovery', 'Allow Companies to Discover My Profile'], ['showSkills', 'Show Skills to Recruiters'], ['showAcademicInfo', 'Show Academic Info to Recruiters'], ['showContactInfo', 'Show Contact Info to Recruiters']];
+    document.getElementById('settings-toggles').innerHTML = fields.map(([key, label]) => `<label class="flex-align gap-2"><input type="checkbox" data-setting="${key}" ${data.settings[key] ? 'checked' : ''}>${label}</label>`).join('');
+    document.getElementById('setting-theme').value = data.settings.theme || 'system';
+    applyTheme(data.settings.theme || 'system');
+  } catch (e) {}
+}
+async function saveSettings(event) { event.preventDefault(); try { const settings = { theme: document.getElementById('setting-theme').value }; document.querySelectorAll('[data-setting]').forEach(input => { settings[input.dataset.setting] = input.checked; }); await apiFetch('/student/settings', { method: 'PUT', body: JSON.stringify(settings) }); await apiFetch('/student/account', { method: 'PUT', body: JSON.stringify({ username: document.getElementById('setting-username').value.trim(), email: document.getElementById('setting-email').value.trim(), mobile: document.getElementById('setting-mobile').value.trim() }) }); applyTheme(settings.theme); alert('Settings saved.'); } catch (err) { alert(err.message); } }
+async function changePassword(event) { event.preventDefault(); try { const data = await apiFetch('/student/change-password', { method: 'PUT', body: JSON.stringify({ currentPassword: document.getElementById('current-password').value, newPassword: document.getElementById('new-password').value, confirmPassword: document.getElementById('confirm-password').value }) }); alert(data.message); event.target.reset(); } catch (err) { alert(err.message); } }
+function applyTheme(theme) { const resolved = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : theme; document.body.dataset.theme = resolved; localStorage.setItem('sb_theme', theme); }
 
 // COMPANY RECRUITER LOADERS
 async function loadCompanyATSPipeline() {
@@ -564,10 +604,11 @@ async function handlePostJobSubmit(e) {
 
 async function loadTalentFinder() {
   try {
-    const students = await apiFetch('/college/students');
-    document.getElementById('talent-candidates-list').innerHTML = students.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.college} • ${s.department}</div><div style="font-size:0.85rem; font-weight:800; color:var(--text-emerald);" class="mt-2">CGPA: ${s.cgpa || 8.8}</div></div>`).join('');
+    const students = await apiFetch('/company/talent-finder');
+    document.getElementById('talent-candidates-list').innerHTML = students.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.studentId} • ${s.department}</div><div style="font-size:0.85rem; font-weight:800; color:var(--text-emerald);" class="mt-2">${s.matchPercentage}% · ${s.recommendationLevel}</div><div class="text-xs mt-2">${s.skills.map(skill => `${skill.name} ${skill.scoreOutOfTen}/10`).join(', ') || 'Skills hidden by privacy settings'}</div></div>`).join('');
   } catch (e) {}
 }
+async function askCompanyAssistant(event) { event.preventDefault(); try { const data = await apiFetch('/company/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('company-assistant-input').value }) }); document.getElementById('company-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('company-assistant-reply').textContent = err.message; } }
 
 // COLLEGE ADMIN LOADERS
 async function loadCollegeDashboard() {
@@ -581,6 +622,7 @@ async function loadCollegeDashboard() {
     tbody.innerHTML = (data.department_stats || []).map(d => `<tr><td style="font-weight:700;">${d.name}</td><td>${d.total}</td><td style="color:var(--text-emerald); font-weight:800;">${d.placed}</td><td><span class="badge-saas badge-emerald">${d.percentage}%</span></td></tr>`).join('');
   } catch (e) {}
 }
+async function askCollegeAssistant(event) { event.preventDefault(); try { const data = await apiFetch('/college/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('college-assistant-input').value }) }); document.getElementById('college-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('college-assistant-reply').textContent = err.message; } }
 
 async function loadCollegeStudentDirectory() {
   try {

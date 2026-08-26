@@ -76,6 +76,7 @@ function nextCompanyId() { return `CMP-${++counters.company}`; }
 function nextStudentId() { return `SB${new Date().getFullYear()}ST${String(++counters.student).padStart(3, '0')}`; }
 function nextJobId() { return ++counters.job; }
 function nextAppId() { return ++counters.app; }
+function normalizeSkillName(value) { return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 
 const otpStore = {};
 
@@ -177,6 +178,18 @@ function restoreState() {
     if (saved.state) state = { ...state, ...saved.state };
     if (saved.counters) counters = { ...counters, ...saved.counters };
     if (!Array.isArray(state.campusDrives)) state.campusDrives = [];
+    Object.keys(state.certifications || {}).forEach(studentId => {
+      const legacy = state.certifications[studentId] || [];
+      const current = state.certificates[studentId] || [];
+      if (!current.length && legacy.length) state.certificates[studentId] = legacy.map(cert => ({
+        ...cert,
+        certificateName: cert.certificateName || cert.name,
+        issuer: cert.issuer || cert.organization,
+        issueDate: cert.issueDate || cert.issue_date,
+        credentialId: cert.credentialId || cert.credential_id,
+        certificateUrl: cert.certificateUrl || cert.verification_url || ''
+      }));
+    });
   } catch (error) { console.error('State restore failed:', error.message); }
 }
 
@@ -345,7 +358,9 @@ function calculateSkillScore(studentId) {
   score += Math.min(40, (cgpa / 10) * 40);
 
   let skillPoints = skills.reduce((acc, s) => {
-    const proficiency = String(s.proficiency || s.level_pct || '').toLowerCase();
+    const percentage = Number(s.level_pct ?? s.proficiencyPercentage);
+    if (Number.isFinite(percentage)) return acc + (percentage / 100) * 5;
+    const proficiency = String(s.proficiency || '').toLowerCase();
     if (proficiency.includes('expert')) return acc + 6;
     if (proficiency.includes('advanced')) return acc + 5;
     if (proficiency.includes('intermediate')) return acc + 3;
@@ -366,19 +381,21 @@ function calculateSkillScore(studentId) {
 function calculateCompanyMatch(studentId, company) {
   const profile = state.studentProfiles[studentId || 1] || {};
   const skills = state.userSkills[studentId || 1] || [];
-  const studentSkills = skills.reduce((map, skill) => { map[skill.skill_name.toLowerCase()] = Number(skill.level_pct || 0); return map; }, {});
+  const studentSkills = skills.reduce((map, skill) => { map[normalizeSkillName(skill.skill_name || skill.skillName)] = Number(skill.level_pct || 0); return map; }, {});
   const reqSkills = company.required_skills || [];
 
   let matchedSkills = 0;
   let skillGaps = [];
 
   reqSkills.forEach(req => {
-    const found = Object.entries(studentSkills).some(([name, level]) => (name.includes(req.toLowerCase()) || req.toLowerCase().includes(name)) && level >= 70);
+    const requiredName = normalizeSkillName(req);
+    const foundEntry = Object.entries(studentSkills).find(([name]) => name.includes(requiredName) || requiredName.includes(name));
+    const found = Boolean(foundEntry && foundEntry[1] >= 70);
     if (found) {
       matchedSkills++;
-      skillGaps.push({ skill: req, reqLevel: 'Advanced', studentLevel: 'Advanced', gap: 'No Gap — Qualified' });
+      skillGaps.push({ skill: req, required: 70, student: foundEntry[1], result: 'Match', reqLevel: '70%', studentLevel: `${foundEntry[1]}%`, gap: 'No Gap - Qualified' });
     } else {
-      skillGaps.push({ skill: req, reqLevel: 'Advanced', studentLevel: 'Not Found', gap: 'Missing Skill — Action Required' });
+      skillGaps.push({ skill: req, required: 70, student: foundEntry ? foundEntry[1] : 0, result: 'Gap', reqLevel: '70%', studentLevel: foundEntry ? `${foundEntry[1]}%` : 'Not Found', gap: 'Missing Skill - Action Required' });
     }
   });
 
@@ -391,6 +408,10 @@ function calculateCompanyMatch(studentId, company) {
     companyName: company.name,
     matchPercentage: overallMatchPct,
     skillGaps,
+    strengths: skillGaps.filter(item => item.result === 'Match').map(item => `${item.skill} meets the required proficiency.`),
+    skillGapsList: skillGaps.filter(item => item.result === 'Gap').map(item => `${item.skill} needs at least 70% proficiency.`),
+    recommendationLevel: overallMatchPct >= 90 ? 'Excellent Match' : overallMatchPct >= 75 ? 'Strong Match' : overallMatchPct >= 60 ? 'Good Match' : overallMatchPct >= 40 ? 'Partial Match' : 'Low Match',
+    nonGuarantee: 'Your profile appears to be a match based on the available requirements; this does not guarantee selection.',
     isEligible: matchedSkills === reqSkills.length && Number(profile.cgpa || 0) >= Number(company.min_cgpa || 0),
     recommendations: skillGaps.filter(g => g.gap.includes('Missing')).map(g => `Complete course on ${g.skill} to boost match rate by 15%`)
   };
@@ -915,6 +936,9 @@ const server = http.createServer(async (req, res) => {
         if (existing) existing.gpa = gpa; else records.push({ id: Date.now(), semester: `Semester ${semester}`, gpa, status: 'Completed' });
         state.academicRecords[userId] = records;
       } else {
+        if (Array.isArray(body.semesterGpa)) {
+          state.academicRecords[userId] = body.semesterGpa.map((gpa, index) => ({ id: `${userId}-${index + 1}`, semester: `Semester ${index + 1}`, gpa: gpa === '' || gpa === null ? null : Number(gpa), status: gpa === '' || gpa === null ? 'Not Completed' : 'Completed' }));
+        }
         state.schoolEducation[userId] = { ...(state.schoolEducation[userId] || {}), ...(body.school || {}) };
         state.backlogs[userId] = { ...(state.backlogs[userId] || {}), ...(body.backlog || {}) };
       }
@@ -939,7 +963,7 @@ const server = http.createServer(async (req, res) => {
       const body = await parseJSON(req); const skillName = String(body.skillName || body.skill_name || '').trim(); const level = Number(body.proficiencyPercentage ?? body.proficiency ?? body.level_pct ?? 0);
       if (!skillName || !Number.isFinite(level) || level < 0 || level > 100) return sendJSON(400, { error: 'Skill name and proficiency from 0 to 100 are required.' });
       const skills = Array.isArray(state.userSkills[authUser.id]) ? state.userSkills[authUser.id] : [];
-      const existing = skills.find(skill => String(skill.skill_name || skill.skillName || '').toLowerCase() === skillName.toLowerCase());
+      const existing = skills.find(skill => normalizeSkillName(skill.skill_name || skill.skillName) === normalizeSkillName(skillName));
       if (existing) {
         existing.level_pct = level;
         existing.scoreOutOfTen = Number((level / 10).toFixed(1));
@@ -1159,7 +1183,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/student/portfolio' && req.method === 'GET') {
       const authUser = getAuthUser(); const userId = authUser ? authUser.id : 1;
-      return sendJSON(200, { projects: state.projects[userId] || state.projects[1], internships: state.internships[userId] || state.internships[1], certifications: state.certifications[userId] || state.certifications[1], seminars: state.seminars[userId] || state.seminars[1], workshops: state.workshops[userId] || state.workshops[1], hackathons: state.hackathons[userId] || state.hackathons[1], achievements: state.achievements[userId] || state.achievements[1] });
+      return sendJSON(200, { projects: state.projects[userId] || [], internships: state.internships[userId] || [], certificates: state.certificates[userId] || [], achievements: state.achievements[userId] || [], seminars: state.seminars[userId] || [], workshops: state.workshops[userId] || [], hackathons: state.hackathons[userId] || [] });
     }
     if ((pathname === '/api/opportunities' || pathname === '/api/student/jobs') && req.method === 'GET') {
       const authUser = requireStudent();
@@ -1277,6 +1301,29 @@ const server = http.createServer(async (req, res) => {
     // ----------------------------------------------------
     // COMPANY RECRUITER MODULE APIs
     // ----------------------------------------------------
+    if (pathname === '/api/company/talent-finder' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Access Denied. Company Auth Required.' });
+      const company = state.companies.find(item => item.companyId === authUser.companyId) || state.companies[0];
+      const candidates = state.users.filter(user => user.role === 'student').map(user => {
+        const profile = state.studentProfiles[user.id] || {};
+        const settings = getStudentSettings(user.id);
+        if (settings.profileVisibility === 'private' || settings.recruiterDiscovery === false) return null;
+        const match = calculateCompanyMatch(user.id, company);
+        return { studentId: user.student_id, name: profile.name || 'Student', department: profile.department || '', cgpa: settings.showAcademicInfo === false ? null : profile.cgpa, skills: settings.showSkills === false ? [] : (state.userSkills[user.id] || []).map(skill => ({ name: skill.skill_name, scoreOutOfTen: Number((Number(skill.level_pct || 0) / 10).toFixed(1)) })), matchPercentage: match.matchPercentage, recommendationLevel: match.recommendationLevel };
+      }).filter(Boolean).sort((a, b) => b.matchPercentage - a.matchPercentage);
+      return sendJSON(200, candidates);
+    }
+    if (pathname === '/api/company/assistant' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Access Denied. Company Auth Required.' });
+      const company = state.companies.find(item => item.companyId === authUser.companyId) || state.companies[0];
+      const candidates = state.users.filter(user => user.role === 'student').map(user => ({ user, match: calculateCompanyMatch(user.id, company) })).filter(item => getStudentSettings(item.user.id).profileVisibility !== 'private' && getStudentSettings(item.user.id).recruiterDiscovery !== false).sort((a, b) => b.match.matchPercentage - a.match.matchPercentage);
+      const message = String((await parseJSON(req)).message || '').toLowerCase();
+      if (message.includes('average')) { const average = candidates.length ? Math.round(candidates.reduce((sum, item) => sum + item.match.matchPercentage, 0) / candidates.length) : 0; return sendJSON(200, { reply: `The average available candidate match is ${average}%.` }); }
+      if (message.includes('skill')) { const skill = message.match(/skill\s+(?:threshold|over|above)\s+([a-z0-9 .+#-]+)/i)?.[1]?.trim(); const filtered = skill ? candidates.filter(item => (state.userSkills[item.user.id] || []).some(saved => saved.skill_name.toLowerCase().includes(skill.toLowerCase()) && Number(saved.level_pct) >= 70)) : candidates; return sendJSON(200, { reply: `${filtered.length} privacy-eligible candidate(s) meet the requested skill filter.`, candidates: filtered.slice(0, 10).map(item => ({ studentId: item.user.student_id, matchPercentage: item.match.matchPercentage })) }); }
+      return sendJSON(200, { reply: candidates.length ? `Top privacy-eligible candidate: ${candidates[0].user.student_id} at ${candidates[0].match.matchPercentage}% match.` : 'No privacy-eligible candidates are available.' });
+    }
     if (pathname === '/api/company/dashboard' && req.method === 'GET') {
       const authUser = getAuthUser();
       if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Access Denied. Company Auth Required.' });
@@ -1332,6 +1379,16 @@ const server = http.createServer(async (req, res) => {
       const authUser = getAuthUser();
       if (!authUser || authUser.role !== 'college') return sendJSON(401, { error: 'Access Denied. College Admin Auth Required.' });
       return sendJSON(200, Object.values(state.studentProfiles));
+    }
+    if (pathname === '/api/college/assistant' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'college') return sendJSON(401, { error: 'Access Denied. College Admin Auth Required.' });
+      const message = String((await parseJSON(req)).message || '').toLowerCase();
+      const students = Object.values(state.studentProfiles).filter(profile => !authUser.collegeName || profile.university === authUser.collegeName || profile.college === authUser.collegeName);
+      const skills = students.flatMap(profile => state.userSkills[profile.user_id] || []).map(skill => skill.skill_name);
+      if (message.includes('missing') || message.includes('training')) { const counts = skills.reduce((map, skill) => { const key = skill.toLowerCase(); map[key] = (map[key] || 0) + 1; return map; }, {}); const common = Object.entries(counts).sort((a, b) => a[1] - b[1]).slice(0, 5).map(item => item[0]); return sendJSON(200, { reply: common.length ? `The least represented recorded skills are: ${common.join(', ')}.` : 'No skill records are available for this university.' }); }
+      if (message.includes('job-ready') || message.includes('strong')) { const ready = students.filter(profile => Number(profile.cgpa || 0) >= 7.5 && (state.userSkills[profile.user_id] || []).length > 0).length; return sendJSON(200, { reply: `${ready} authorized student(s) have a CGPA of at least 7.5 and at least one recorded skill.` }); }
+      return sendJSON(200, { reply: `${students.length} authorized student record(s) are available for this university.` });
     }
 
     // Static Asset Server Fallback (Supports root & frontend directory)

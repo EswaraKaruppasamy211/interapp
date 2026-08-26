@@ -150,6 +150,19 @@ body::before {
   box-shadow: 0 12px 40px 0 rgba(56, 189, 248, 0.12);
 }
 
+.interview-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, 0.8fr); gap: 1rem; }
+.interview-agent-card { border-color: rgba(56, 189, 248, 0.28); }
+.interview-question { min-height: 92px; padding: 1.25rem; margin-bottom: 1rem; border-left: 3px solid var(--text-blue); background: rgba(2, 132, 199, 0.1); font-size: 1.1rem; line-height: 1.7; }
+.interview-progress { color: var(--text-blue); font-family: 'Fira Code', monospace; font-size: 0.8rem; }
+.interview-status { min-height: 24px; color: var(--text-emerald); font-size: 0.8rem; margin-bottom: 1rem; }
+.interview-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; align-items: end; margin-bottom: 1.25rem; }
+.interview-language-label { grid-column: span 2; color: var(--text-muted); font-size: 0.75rem; font-weight: 700; }
+.interview-transcript { resize: vertical; min-height: 120px; line-height: 1.6; }
+.interview-summary-card { align-self: start; }
+.interview-orb { width: 56px; height: 56px; display: grid; place-items: center; margin-bottom: 1rem; border-radius: 50%; color: #06283d; background: var(--text-blue); box-shadow: 0 0 0 10px rgba(56, 189, 248, 0.1); }
+.interview-summary { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color); }
+.application-row { gap: 1rem; }
+
 .stat-card {
   background: rgba(18, 24, 38, 0.88);
   border: 1px solid var(--border-color);
@@ -240,6 +253,11 @@ body::before {
   .mobile-nav-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text-muted); font-size: 0.68rem; font-weight: 600; background: none; border: none; }
   .mobile-nav-tab.active { color: var(--text-blue); }
   .watermark-sticky-badge { bottom: 74px !important; right: 0.75rem !important; }
+  .interview-layout { grid-template-columns: 1fr; }
+  .interview-heading { align-items: flex-start; gap: 0.75rem; flex-direction: column; }
+  .interview-controls { grid-template-columns: 1fr; }
+  .interview-language-label { grid-column: auto; }
+  .application-row { align-items: flex-start; flex-direction: column; }
   .floating-ai-button { right: 0.75rem; bottom: 126px; }
   .ai-assistant-panel { right: 0.75rem; bottom: 184px; }
 }

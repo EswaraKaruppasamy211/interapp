@@ -213,41 +213,119 @@ function evaluateMockInterviewAnswer(question, answer, track = 'Data Structures'
   };
 }
 
-async function generateAICareerAdvice(userPrompt, studentContext) {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
-  if (apiKey) {
-    try {
-      const promptText = `System Context: You are SkillBridge AI Advisor for ${studentContext.name || 'Student'}.\nUser Question: ${userPrompt}\nGive 3 sentences of concise advice.`;
-      const requestData = JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] });
+function getGeminiConfig() {
+  const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
+  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY || '';
+  const modelName = process.env.AI_MODEL || 'gemini-1.5-flash';
+  const timeoutMs = Number(process.env.AI_TIMEOUT_MS || 15000);
 
-      return new Promise((resolve) => {
-        const req = https.request({
-          hostname: 'generativelanguage.googleapis.com',
-          path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestData) }
-        }, (res) => {
-          let body = '';
-          res.on('data', chunk => body += chunk);
-          res.on('end', () => {
-            try {
-              const parsed = JSON.parse(body);
-              resolve(parsed.candidates[0].content.parts[0].text);
-            } catch (e) { resolve(fallbackLocalAIResponse(userPrompt, studentContext)); }
-          });
-        });
-        req.on('error', () => resolve(fallbackLocalAIResponse(userPrompt, studentContext)));
-        req.write(requestData);
-        req.end();
-      });
-    } catch (err) { return fallbackLocalAIResponse(userPrompt, studentContext); }
+  return {
+    provider,
+    apiKey,
+    modelName,
+    timeoutMs,
+    endpoint: 'https://generativelanguage.googleapis.com'
+  };
+}
+
+function parseGeminiResponse(bodyText) {
+  if (!bodyText) return '';
+  try {
+    const parsed = JSON.parse(bodyText);
+    const candidate = parsed.candidates && parsed.candidates[0];
+    const text = candidate && candidate.content && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts.map(part => part.text || '').join(' ').trim()
+      : '';
+    if (text) return text;
+    if (parsed.error) {
+      const code = parsed.error?.code || 'AI_ERROR';
+      const status = parsed.error?.status || 'unknown';
+      throw new Error(`Gemini ${status} (${code})`);
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[AI] Gemini response parse failed:', error.message);
+    }
+    return '';
   }
-  return fallbackLocalAIResponse(userPrompt, studentContext);
+  return '';
+}
+
+async function generateAICareerAdvice(userPrompt, studentContext) {
+  const config = getGeminiConfig();
+  const promptText = `System Context: You are SkillBridge AI Advisor for ${studentContext?.name || 'Student'}.
+User Question: ${userPrompt}
+Give 3 sentences of concise advice.`;
+
+  if (!config.apiKey || config.provider !== 'gemini') {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[AI] Gemini API key missing or provider not configured. Using local fallback advice.');
+    }
+    return fallbackLocalAIResponse(userPrompt, studentContext);
+  }
+
+  const requestData = JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] });
+
+  return new Promise((resolve) => {
+    const requestOptions = {
+      hostname: 'generativelanguage.googleapis.com',
+      path: `/v1beta/models/${encodeURIComponent(config.modelName)}:generateContent?key=${config.apiKey}`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestData) },
+      timeout: config.timeoutMs
+    };
+
+    const req = https.request(requestOptions, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          const detail = body ? body.slice(0, 400) : 'No response body';
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[AI] Gemini HTTP error:', res.statusCode, detail);
+          }
+          resolve(fallbackLocalAIResponse(userPrompt, studentContext));
+          return;
+        }
+
+        const text = parseGeminiResponse(body);
+        if (text) {
+          resolve(text);
+          return;
+        }
+
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[AI] Gemini returned invalid payload. Using local fallback advice.');
+        }
+        resolve(fallbackLocalAIResponse(userPrompt, studentContext));
+      });
+    });
+
+    req.on('timeout', () => {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AI] Gemini request timed out at', config.timeoutMs, 'ms');
+      }
+      req.destroy(new Error('AI timeout'));
+    });
+
+    req.on('error', (error) => {
+      const message = error && error.message ? error.message : 'AI request failed';
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[AI] Gemini request failed:', message, 'Endpoint:', config.endpoint, 'Provider:', config.provider);
+      }
+      resolve(fallbackLocalAIResponse(userPrompt, studentContext));
+    });
+
+    req.write(requestData);
+    req.end();
+  });
 }
 
 function fallbackLocalAIResponse(prompt, studentContext) {
-  return `Focus on building 2 complete full-stack projects with live demo links and completing 1 Industry Micro-Project for maximum recruiter match %!`;
+  const name = studentContext?.name || 'student';
+  return `Hi ${name}, focus on building 2 complete full-stack projects with live demo links and 1 strong industry project. Keep improving communication, system design, and practical problem-solving for better interview readiness.`;
 }
+
 
 module.exports = {
   suggestSkillsForRole,

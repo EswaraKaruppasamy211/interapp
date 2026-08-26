@@ -7,8 +7,30 @@ let currentProfile = null;
 let currentRole = 'student';
 let authToken = localStorage.getItem('sb_token') || null;
 let pendingStudentOtpEmail = null;
+let voiceInterview = {
+  language: 'ta-IN',
+  questionIndex: 0,
+  answers: [],
+  recognition: null,
+  listening: false,
+  sessionStarted: false,
+  lastTranscript: ''
+};
+
+const interviewQuestions = [
+  { en: 'Tell me about yourself and the kind of software role you are looking for.', ta: 'உங்களைப் பற்றியும் நீங்கள் தேடும் மென்பொருள் பணியைப் பற்றியும் சொல்லுங்கள்.' },
+  { en: 'Explain one project you built and the most important technical decision you made.', ta: 'நீங்கள் உருவாக்கிய ஒரு திட்டத்தையும் அதில் எடுத்த முக்கியமான தொழில்நுட்ப முடிவையும் விளக்குங்கள்.' },
+  { en: 'How would you debug an API that suddenly became slow in production?', ta: 'Production-ல் திடீரென மெதுவான API-யை எப்படி debug செய்வீர்கள்?' },
+  { en: 'Describe a time you solved a difficult problem with a teammate.', ta: 'ஒரு குழு உறுப்பினருடன் சேர்ந்து கடினமான பிரச்சினையைத் தீர்த்த அனுபவத்தைச் சொல்லுங்கள்.' },
+  { en: 'Why should we select you for this role?', ta: 'இந்த பணிக்கு உங்களை ஏன் தேர்வு செய்ய வேண்டும்?' }
+];
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const transcript = document.getElementById('interview-transcript');
+  if (transcript) {
+    transcript.addEventListener('input', updateInterviewAnswerState);
+  }
+
   if (authToken) {
     await fetchCurrentUser();
   } else {
@@ -130,6 +152,7 @@ function navigateTo(viewId) {
   else if (viewId === 'skill-map') loadSkillMapView();
   else if (viewId === 'opportunities') loadOpportunitiesView();
   else if (viewId === 'applications') loadApplicationsView();
+  else if (viewId === 'interview-prep') loadInterviewPrepView();
   else if (viewId === 'notifications') loadNotificationsView();
   else if (viewId === 'campus-drives') loadCampusDrivesView();
   else if (viewId === 'placement') loadPlacementView();
@@ -540,8 +563,224 @@ async function handleApplyJob(jobId) {
 async function loadApplicationsView() {
   try {
     const apps = await apiFetch('/student/applications');
-    document.getElementById('applications-list-container').innerHTML = apps.map(a => `<div class="saas-card mb-3 flex-between"><div><h4 style="font-weight:700;">${a.job_title}</h4><div style="font-size:0.85rem; color:var(--text-blue);">${a.company_name}</div></div><span class="badge-saas badge-emerald">${a.status}</span></div>`).join('');
+    document.getElementById('applications-list-container').innerHTML = apps.map(a => `<div class="saas-card mb-3 flex-between application-row"><div><h4 style="font-weight:700;">${a.job_title}</h4><div style="font-size:0.85rem; color:var(--text-blue);">${a.company_name}</div><div class="text-xs mt-2" style="color:var(--text-muted);">${a.interview ? `Interview: ${a.interview.date} at ${a.interview.time}` : 'Application in progress'}</div></div><div class="flex-align gap-2"><span class="badge-saas badge-emerald">${a.status}</span>${a.interview ? '<button class="btn-saas btn-primary" onclick="navigateTo(\'interview-prep\')"><i class="fa-solid fa-microphone-lines"></i> Practice</button>' : ''}</div></div>`).join('') || '<div class="saas-card">No applications yet.</div>';
   } catch (e) {}
+}
+
+function loadInterviewPrepView() {
+  setInterviewLanguage(document.getElementById('interview-language')?.value || voiceInterview.language);
+  if (!voiceInterview.sessionStarted && !voiceInterview.answers.length && voiceInterview.questionIndex === 0) resetInterviewView();
+}
+
+function setInterviewLanguage(language) {
+  voiceInterview.language = language;
+  const languageSelect = document.getElementById('interview-language');
+  if (languageSelect && languageSelect.value !== language) {
+    languageSelect.value = language;
+  }
+
+  if (voiceInterview.questionIndex < interviewQuestions.length && document.getElementById('interview-question')) {
+    const question = interviewQuestions[voiceInterview.questionIndex];
+    const text = language === 'ta-IN' ? question.ta : question.en;
+    const questionEl = document.getElementById('interview-question');
+    const currentText = questionEl.textContent || '';
+    if (!voiceInterview.sessionStarted && (currentText.includes('Choose a language') || currentText.includes('Ready when you are'))) {
+      questionEl.textContent = text;
+    }
+  }
+}
+
+function resetInterviewView() {
+  voiceInterview.questionIndex = 0;
+  voiceInterview.answers = [];
+  voiceInterview.lastTranscript = '';
+  voiceInterview.sessionStarted = false;
+  voiceInterview.listening = false;
+  if (voiceInterview.recognition) {
+    try { voiceInterview.recognition.stop(); } catch (err) {}
+    voiceInterview.recognition = null;
+  }
+
+  const questionNumber = document.getElementById('interview-question-number');
+  const startButton = document.getElementById('interview-start-btn');
+  const listenButton = document.getElementById('interview-listen-btn');
+  const nextButton = document.getElementById('interview-next-btn');
+  if (questionNumber) questionNumber.textContent = 'Ready when you are';
+  if (startButton) startButton.disabled = false;
+  if (listenButton) listenButton.disabled = true;
+  if (nextButton) nextButton.disabled = true;
+  document.getElementById('interview-progress').textContent = '0 / 5';
+  document.getElementById('interview-question').textContent = 'Choose a language and start the mock interview. The agent will ask one question at a time.';
+  document.getElementById('interview-transcript').value = '';
+  document.getElementById('interview-summary').innerHTML = '<span class="text-sm" style="color:var(--text-muted);">Your practice summary will appear here when you finish.</span>';
+  setInterviewStatus('Microphone is off');
+}
+
+function setInterviewStatus(message) {
+  const status = document.getElementById('interview-status');
+  if (status) status.textContent = message;
+}
+
+function getPreferredVoice(languageCode) {
+  if (!('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const normalized = languageCode.toLowerCase();
+  return voices.find(voice => {
+    const name = (voice.lang || '').toLowerCase();
+    return name === normalized || name.startsWith(normalized.replace('-', '')) || name.startsWith(normalized.substring(0, 2));
+  }) || voices.find(voice => (voice.lang || '').toLowerCase().startsWith(languageCode.slice(0, 2))) || voices[0];
+}
+
+function speakInterviewQuestion(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = voiceInterview.language;
+  const preferredVoice = getPreferredVoice(voiceInterview.language);
+  if (preferredVoice) utterance.voice = preferredVoice;
+  utterance.rate = 0.92;
+  utterance.pitch = 1.1;
+  window.speechSynthesis.speak(utterance);
+}
+
+function getSpeechRecognition() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition;
+}
+
+function updateInterviewAnswerState() {
+  const transcript = document.getElementById('interview-transcript').value.trim();
+  const nextButton = document.getElementById('interview-next-btn');
+  nextButton.disabled = !transcript;
+  setInterviewStatus(transcript ? 'Answer ready. Review it and continue.' : 'Ready for your answer');
+}
+
+function startVoiceInterview() {
+  resetInterviewView();
+  voiceInterview.sessionStarted = true;
+  const question = interviewQuestions[0];
+  const text = voiceInterview.language === 'ta-IN' ? question.ta : question.en;
+  document.getElementById('interview-question-number').textContent = 'Question 1';
+  document.getElementById('interview-progress').textContent = '1 / 5';
+  document.getElementById('interview-question').textContent = text;
+  document.getElementById('interview-start-btn').disabled = true;
+  document.getElementById('interview-listen-btn').disabled = !getSpeechRecognition();
+  document.getElementById('interview-next-btn').disabled = true;
+  setInterviewStatus(getSpeechRecognition() ? 'Ready for your answer' : 'Voice input is unavailable; type your answer below');
+  speakInterviewQuestion(text);
+}
+
+function toggleVoiceInput() {
+  const Recognition = getSpeechRecognition();
+  if (!Recognition) {
+    setInterviewStatus('This browser does not support microphone input.');
+    return;
+  }
+
+  if (voiceInterview.listening) {
+    voiceInterview.recognition.stop();
+    return;
+  }
+
+  const recognition = new Recognition();
+  recognition.lang = voiceInterview.language;
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.maxAlternatives = 3;
+
+  voiceInterview.recognition = recognition;
+  voiceInterview.listening = true;
+
+  recognition.onstart = () => setInterviewStatus('Listening... Speak clearly into the mic.');
+  recognition.onresult = event => {
+    // Build a transcript that prefers final results but also shows interim text.
+    let interim = '';
+    let finalTranscript = '';
+    for (let i = 0; i < event.results.length; i++) {
+      const res = event.results[i];
+      const piece = (res[0] && res[0].transcript) ? res[0].transcript : '';
+      if (res.isFinal) finalTranscript += piece + ' ';
+      else interim += piece + ' ';
+    }
+    const combined = (finalTranscript + interim).trim();
+    if (!combined) return;
+    document.getElementById('interview-transcript').value = combined;
+    voiceInterview.lastTranscript = combined;
+    updateInterviewAnswerState();
+    // If we received a final result, offer the user to continue immediately.
+    if (finalTranscript.trim()) {
+      document.getElementById('interview-next-btn').disabled = false;
+      setInterviewStatus('Answer captured. Review and continue.');
+    }
+  };
+  recognition.onerror = event => {
+    const errorMessage = event.error === 'not-allowed'
+      ? 'Microphone permission was denied. You can still type your answer.'
+      : `Voice input error: ${event.error}`;
+    setInterviewStatus(errorMessage);
+    voiceInterview.listening = false;
+    // Ensure recognition reference is cleared so future toggles recreate it.
+    try { voiceInterview.recognition && voiceInterview.recognition.abort(); } catch (e) {}
+    voiceInterview.recognition = null;
+  };
+  recognition.onend = () => {
+    voiceInterview.listening = false;
+    const typedValue = document.getElementById('interview-transcript').value.trim();
+    const last = (voiceInterview.lastTranscript || '').trim();
+    if (typedValue || last) {
+      if (!typedValue && last) document.getElementById('interview-transcript').value = last;
+      setInterviewStatus('Answer ready. Review it and continue.');
+      document.getElementById('interview-next-btn').disabled = false;
+    } else {
+      setInterviewStatus('No answer captured. Type your response or try again.');
+    }
+    // Clear recognition so subsequent toggles create a fresh instance.
+    voiceInterview.recognition = null;
+  };
+
+  recognition.start();
+}
+
+function submitInterviewAnswer() {
+  const transcript = document.getElementById('interview-transcript').value.trim();
+  if (!transcript) {
+    setInterviewStatus('Speak or type an answer before continuing.');
+    return;
+  }
+
+  voiceInterview.answers.push(transcript);
+  const isLastQuestion = voiceInterview.questionIndex >= interviewQuestions.length - 1;
+  if (isLastQuestion) {
+    finishVoiceInterview();
+    return;
+  }
+
+  voiceInterview.questionIndex += 1;
+  const question = interviewQuestions[voiceInterview.questionIndex];
+  const text = voiceInterview.language === 'ta-IN' ? question.ta : question.en;
+  document.getElementById('interview-question-number').textContent = `Question ${voiceInterview.questionIndex + 1}`;
+  document.getElementById('interview-progress').textContent = `${voiceInterview.questionIndex + 1} / 5`;
+  document.getElementById('interview-question').textContent = text;
+  document.getElementById('interview-transcript').value = '';
+  document.getElementById('interview-next-btn').disabled = true;
+  setInterviewStatus('Ready for your answer');
+  speakInterviewQuestion(text);
+}
+
+function finishVoiceInterview() {
+  if (voiceInterview.recognition && voiceInterview.listening) voiceInterview.recognition.stop();
+  const answered = voiceInterview.answers.length;
+  const summaryItems = voiceInterview.answers.map((answer, index) => `<div class="text-sm mb-2"><strong>Q${index + 1}:</strong> ${answer.slice(0, 220)}${answer.length > 220 ? '…' : ''}</div>`).join('');
+
+  document.getElementById('interview-question-number').textContent = 'Practice complete';
+  document.getElementById('interview-progress').textContent = `${answered} / 5 answered`;
+  document.getElementById('interview-question').textContent = 'Good work. Review your answers and repeat the round to improve clarity and structure.';
+  document.getElementById('interview-start-btn').disabled = false;
+  document.getElementById('interview-next-btn').disabled = true;
+  document.getElementById('interview-listen-btn').disabled = true;
+  document.getElementById('interview-summary').innerHTML = `<strong>${answered}/5 responses captured</strong><div class="mt-3">${summaryItems || '<p class="text-sm mt-2">No answers recorded yet.</p>'}</div><p class="text-sm mt-2">Try answering with a clear situation, action, and result. No audio or transcript was uploaded.</p>`;
+  setInterviewStatus('Session complete');
+  if ('speechSynthesis' in window) speakInterviewQuestion(voiceInterview.language === 'ta-IN' ? 'நன்றி. உங்கள் நேர்காணல் பயிற்சி முடிந்தது.' : 'Thank you. Your interview practice is complete.');
 }
 async function loadNotificationsView() {
   try {

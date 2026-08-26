@@ -265,6 +265,18 @@ body::before {
 /* STICKY WATERMARK BADGE */
 .watermark-sticky-badge { position: fixed; bottom: 1.25rem; right: 1.25rem; z-index: 9999; background: rgba(18, 24, 38, 0.92); border: 1px solid rgba(56, 189, 248, 0.35); backdrop-filter: blur(12px); padding: 0.45rem 0.95rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; color: #38bdf8; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
 
+.interview-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(250px, 0.9fr); gap: 1.25rem; }
+.interview-agent-card, .interview-summary-card { padding: 1.3rem; }
+.interview-panel-top { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.interview-progress { border: 1px solid rgba(56, 189, 248, 0.35); background: rgba(14, 116, 144, 0.15); color: #7dd3fc; font-size: 0.78rem; font-weight: 700; border-radius: 999px; padding: 0.4rem 0.8rem; }
+.interview-question { margin: 1rem 0; font-size: clamp(1.05rem, 1.4vw, 1.4rem); line-height: 1.6; font-weight: 700; color: var(--text-primary); }
+.interview-status { margin: 0.5rem 0 1rem; color: var(--text-secondary); font-size: 0.8rem; font-weight: 600; }
+.interview-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; align-items: end; margin-bottom: 1rem; }
+.interview-language-label { display: block; font-size: 0.72rem; font-weight: 800; color: var(--text-muted); margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.interview-transcript { min-height: 130px; resize: vertical; }
+.interview-summary { background: rgba(17, 24, 39, 0.75); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.85rem 1rem; color: var(--text-secondary); }
+.interview-orb { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(135deg, rgba(59,130,246,.14), rgba(168,85,247,.17)); border: 1px solid rgba(168,85,247,.28); color: #c084fc; font-size: 1.4rem; margin-bottom: 0.75rem; }
+
 @media (max-width: 768px) {
   body { padding-bottom: 74px !important; }
   .main-workspace { padding: 1.25rem 1rem 5rem 1rem !important; }

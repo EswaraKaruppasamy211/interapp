@@ -120,6 +120,7 @@
         <a href="#" class="sidebar-item" data-target="ai-assistant" onclick="openAiAssistant()"><i class="fa-solid fa-robot"></i> <span>AI Career Assistant</span></a>
         <a href="#" class="sidebar-item" data-target="opportunities" onclick="navigateTo('opportunities')"><i class="fa-solid fa-briefcase"></i> <span>Opportunities</span></a>
         <a href="#" class="sidebar-item" data-target="applications" onclick="navigateTo('applications')"><i class="fa-solid fa-paper-plane"></i> <span>Applications</span></a>
+        <a href="#" class="sidebar-item" data-target="interview-prep" onclick="navigateTo('interview-prep')"><i class="fa-solid fa-microphone-lines"></i> <span>Voice Interview Prep</span></a>
         <a href="#" class="sidebar-item" data-target="campus-drives" onclick="navigateTo('campus-drives')"><i class="fa-solid fa-building-columns"></i> <span>Campus Drives</span></a>
         <a href="#" class="sidebar-item" data-target="placement" onclick="navigateTo('placement')"><i class="fa-solid fa-trophy"></i> <span>My Placement</span></a>
         <a href="#" class="sidebar-item" data-target="notifications" onclick="navigateTo('notifications')"><i class="fa-solid fa-bell"></i> <span>Notifications</span></a>
@@ -218,6 +219,29 @@
       <section id="view-skill-map" class="workspace-view hidden"><h1 class="mb-2">AI Skill Map</h1><p class="mb-4" style="color:var(--text-muted);">Your saved skills compared with the requirements of companies and jobs in SkillBridge.</p><div class="saas-card mb-4"><strong>Companies in this app</strong><div id="skill-map-companies" class="flex-align gap-2 flex-wrap mt-2"></div></div><div id="skill-map-list"></div></section>
       <section id="view-opportunities" class="workspace-view hidden"><h1 class="mb-4">Opportunities</h1><div id="opportunities-list-container" class="grid-2 gap-4"></div></section>
       <section id="view-applications" class="workspace-view hidden"><h1 class="mb-4">Applications</h1><div id="applications-list-container"></div></section>
+      <section id="view-interview-prep" class="workspace-view hidden">
+        <div class="flex-between mb-4 interview-heading">
+          <div><h1 class="mb-1">Voice Interview Prep</h1><p style="color:var(--text-muted);">Practice a structured technical interview in Tamil or English. Audio stays in your browser.</p></div>
+          <span class="badge-saas badge-emerald"><i class="fa-solid fa-lock"></i> Private session</span>
+        </div>
+        <div class="interview-layout">
+          <div class="saas-card interview-agent-card">
+            <div class="flex-between mb-4"><div><span class="badge-saas badge-purple mb-2">AI VOICE AGENT</span><h2 id="interview-question-number">Ready when you are</h2></div><div id="interview-progress" class="interview-progress">0 / 5</div></div>
+            <div id="interview-question" class="interview-question">Choose a language and start the mock interview. The agent will ask one question at a time.</div>
+            <div id="interview-status" class="interview-status" role="status">Microphone is off</div>
+            <div class="interview-controls">
+              <label class="interview-language-label" for="interview-language">Interview language</label>
+              <select id="interview-language" class="saas-input" onchange="setInterviewLanguage(this.value)"><option value="ta-IN">Tamil / தமிழ்</option><option value="en-IN">English</option></select>
+              <button id="interview-start-btn" class="btn-saas btn-primary" onclick="startVoiceInterview()"><i class="fa-solid fa-play"></i> Start interview</button>
+              <button id="interview-listen-btn" class="btn-saas btn-outline" onclick="toggleVoiceInput()" disabled><i class="fa-solid fa-microphone"></i> Speak answer</button>
+            </div>
+            <label class="block text-xs font-bold mb-1" for="interview-transcript">Your answer</label>
+            <textarea id="interview-transcript" class="saas-input interview-transcript" rows="5" placeholder="Your spoken answer will appear here. You can also type it."></textarea>
+            <div class="flex-between mt-3"><span class="text-xs" style="color:var(--text-muted);">Answer is used only for this practice summary.</span><button id="interview-next-btn" class="btn-saas btn-primary" onclick="submitInterviewAnswer()" disabled>Next question <i class="fa-solid fa-arrow-right"></i></button></div>
+          </div>
+          <aside class="saas-card interview-summary-card"><div class="interview-orb"><i class="fa-solid fa-waveform-lines"></i></div><h3>Interview focus</h3><p>Communication, problem solving, projects, and role readiness.</p><div id="interview-summary" class="interview-summary"><span class="text-sm" style="color:var(--text-muted);">Your practice summary will appear here when you finish.</span></div></aside>
+        </div>
+      </section>
       <section id="view-notifications" class="workspace-view hidden"><h1 class="mb-4">Notifications</h1><div id="notifications-list-container"></div></section>
       <section id="view-settings" class="workspace-view hidden"><h1 class="mb-4">Settings</h1><div class="saas-card"><form onsubmit="saveSettings(event)"><h3>Account</h3><input id="setting-username" class="saas-input mt-2" placeholder="Username"><input id="setting-email" type="email" class="saas-input mt-2" placeholder="Email"><input id="setting-mobile" class="saas-input mt-2" placeholder="Mobile"><input id="setting-student-id" class="saas-input mt-2" readonly><h3 class="mt-4">Notifications & Privacy</h3><div id="settings-toggles" class="grid-2 gap-2 mt-2"></div><label class="block text-xs font-bold mt-3">Appearance<select id="setting-theme" class="saas-input"><option value="system">System Default</option><option value="light">Light</option><option value="dark">Dark</option></select></label><button class="btn-saas btn-primary mt-4" type="submit">Save Settings</button></form><form onsubmit="changePassword(event)" class="mt-6"><h3>Password</h3><input id="current-password" type="password" class="saas-input mt-2" placeholder="Current Password" required><input id="new-password" type="password" class="saas-input mt-2" placeholder="New Password" required><input id="confirm-password" type="password" class="saas-input mt-2" placeholder="Confirm New Password" required><button class="btn-saas btn-outline mt-3" type="submit">Update Password</button></form><div class="mt-6"><h3>Account Control</h3><button type="button" class="btn-saas btn-outline mt-3" onclick="deleteStudentAccount()">Delete My Account</button></div></div></section>
 

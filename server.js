@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const { URL } = require('url');
 
 // Environment Setup
-const envPath = path.join(__dirname, '..', '.env');
+const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
   try {
     fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
@@ -27,7 +27,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const port = Number(process.env.PORT) || 3000;
-const repoRoot = path.resolve(__dirname, '..');
+const repoRoot = __dirname;
 const uploadsDir = path.join(repoRoot, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 

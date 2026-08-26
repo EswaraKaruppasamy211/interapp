@@ -1051,6 +1051,16 @@ const server = http.createServer(async (req, res) => {
       state.studentProfiles[authUser.id] = { ...(state.studentProfiles[authUser.id] || {}), email, phone: mobile, name: state.studentProfiles[authUser.id]?.name || authUser.username };
       return sendJSON(200, { success: true, user: { ...state.users[userIndex], email, username }, profile: state.studentProfiles[authUser.id] });
     }
+    if (pathname === '/api/student/account' && req.method === 'DELETE') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
+      state.users = state.users.filter(user => user.id !== userId);
+      state.applications = state.applications.filter(application => application.student_id !== userId);
+      ['studentProfiles', 'resumes', 'academicRecords', 'schoolEducation', 'backlogs', 'userSkills', 'codingSkills', 'assessments', 'projects', 'internships', 'certifications', 'seminars', 'workshops', 'hackathons', 'achievements', 'notifications', 'preferences', 'settings', 'certificates', 'placements'].forEach(collection => { if (state[collection]) delete state[collection][userId]; });
+      (state.campusDrives || []).forEach(drive => { drive.registrations = (drive.registrations || []).filter(studentId => studentId !== userId); });
+      return sendJSON(200, { success: true, message: 'Student account and associated data deleted.' });
+    }
     if (pathname === '/api/student/placement' && req.method === 'GET') {
       const authUser = requireStudent();
       if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
@@ -1194,6 +1204,17 @@ const server = http.createServer(async (req, res) => {
         const match = calculateCompanyMatch(userId, comp);
         return { ...j, match_percentage: match.matchPercentage, is_eligible: match.isEligible };
       }));
+    }
+    if (pathname === '/api/student/skill-map' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const userId = authUser.id;
+      const skillMap = state.jobs.map(job => {
+        const company = state.companies.find(item => item.companyId === job.companyId) || {};
+        const match = calculateCompanyMatch(userId, { ...company, required_skills: job.required_skills || company.required_skills || [], min_cgpa: job.min_cgpa ?? company.min_cgpa });
+        return { jobId: job.id, jobTitle: job.title, companyName: job.company_name || company.name || 'Company', location: job.location || '', jobType: job.job_type || '', matchPercentage: match.matchPercentage, recommendationLevel: match.recommendationLevel, strengths: match.strengths, skillGaps: match.skillGapsList, requirements: match.skillGaps, eligible: match.isEligible };
+      }).sort((a, b) => b.matchPercentage - a.matchPercentage);
+      return sendJSON(200, { companies: [...new Set(skillMap.map(item => item.companyName))], jobs: skillMap });
     }
     if (pathname.match(/^\/api\/student\/jobs\/\d+$/) && req.method === 'GET') {
       const authUser = requireStudent();

@@ -127,6 +127,7 @@ function navigateTo(viewId) {
   else if (viewId === 'assessments') loadAssessmentsView();
   else if (viewId === 'portfolio') loadPortfolioView();
   else if (viewId === 'ai-skill-analyzer') loadAISkillAnalyzerView();
+  else if (viewId === 'skill-map') loadSkillMapView();
   else if (viewId === 'opportunities') loadOpportunitiesView();
   else if (viewId === 'applications') loadApplicationsView();
   else if (viewId === 'notifications') loadNotificationsView();
@@ -515,6 +516,14 @@ async function loadAISkillAnalyzerView() {
     document.getElementById('ai-match-details').innerHTML = `<p class="mt-2">${data.recommendationLevel}</p><p class="text-xs mt-2">${data.nonGuarantee}</p><table class="saas-table mt-3"><thead><tr><th>Skill</th><th>Required</th><th>Student</th><th>Result</th></tr></thead><tbody>${(data.skillGaps || []).map(item => `<tr><td>${item.skill}</td><td>${item.reqLevel}</td><td>${item.studentLevel}</td><td>${item.result === 'Match' ? '✓ Match' : '⚠ Gap'}</td></tr>`).join('')}</tbody></table>`;
   } catch (e) {}
 }
+async function loadSkillMapView() {
+  try {
+    const data = await apiFetch('/student/skill-map');
+    document.getElementById('skill-map-companies').innerHTML = (data.companies || []).map(company => `<span class="badge-saas badge-blue">${company}</span>`).join('') || '<span class="text-sm">No companies available.</span>';
+    document.getElementById('skill-map-list').innerHTML = (data.jobs || []).map(job => `<div class="saas-card mb-3"><div class="flex-between"><div><h3>${job.jobTitle}</h3><p class="text-xs" style="color:var(--text-muted);">${job.companyName} · ${job.location || 'Location not specified'} · ${job.jobType || 'Opportunity'}</p></div><div class="text-right"><strong style="color:var(--text-emerald);">${job.matchPercentage}%</strong><div class="text-xs">${job.recommendationLevel}</div></div></div><div class="grid-2 gap-3 mt-3"><div><strong class="text-xs">Strengths</strong><p class="text-xs mt-1">${job.strengths?.join(' ') || 'No matching requirements recorded.'}</p></div><div><strong class="text-xs">Skill gaps</strong><p class="text-xs mt-1">${job.skillGaps?.join(' ') || 'No skill gaps detected.'}</p></div></div><button class="btn-saas btn-outline mt-3" onclick="navigateTo('ai-skill-analyzer'); loadJobAnalysis(${job.jobId})">View AI Analysis</button></div>`).join('') || '<div class="saas-card">No jobs are available for skill mapping.</div>';
+  } catch (e) { document.getElementById('skill-map-list').innerHTML = '<div class="saas-card">Unable to load the AI skill map.</div>'; }
+}
+async function loadJobAnalysis(jobId) { try { const data = await apiFetch(`/student/jobs/${jobId}`); document.getElementById('ai-match-pct').textContent = `${data.matchPercentage}% Match`; document.getElementById('ai-match-details').innerHTML = `<p class="mt-2">${data.recommendationLevel}</p><p class="text-xs mt-2">${data.nonGuarantee}</p><table class="saas-table mt-3"><thead><tr><th>Skill</th><th>Required</th><th>Student</th><th>Result</th></tr></thead><tbody>${(data.skillGaps || []).map(item => `<tr><td>${item.skill}</td><td>${item.reqLevel}</td><td>${item.studentLevel}</td><td>${item.result === 'Match' ? '✓ Match' : '⚠ Gap'}</td></tr>`).join('')}</tbody></table>`; } catch (e) {} }
 async function loadOpportunitiesView() {
   try {
     const jobs = await apiFetch('/opportunities');
@@ -577,6 +586,7 @@ async function loadSettingsView() {
 }
 async function saveSettings(event) { event.preventDefault(); try { const settings = { theme: document.getElementById('setting-theme').value }; document.querySelectorAll('[data-setting]').forEach(input => { settings[input.dataset.setting] = input.checked; }); await apiFetch('/student/settings', { method: 'PUT', body: JSON.stringify(settings) }); await apiFetch('/student/account', { method: 'PUT', body: JSON.stringify({ username: document.getElementById('setting-username').value.trim(), email: document.getElementById('setting-email').value.trim(), mobile: document.getElementById('setting-mobile').value.trim() }) }); applyTheme(settings.theme); alert('Settings saved.'); } catch (err) { alert(err.message); } }
 async function changePassword(event) { event.preventDefault(); try { const data = await apiFetch('/student/change-password', { method: 'PUT', body: JSON.stringify({ currentPassword: document.getElementById('current-password').value, newPassword: document.getElementById('new-password').value, confirmPassword: document.getElementById('confirm-password').value }) }); alert(data.message); event.target.reset(); } catch (err) { alert(err.message); } }
+async function deleteStudentAccount() { if (!window.confirm('Delete your account and all associated profile data? This action cannot be undone.')) return; try { await apiFetch('/student/account', { method: 'DELETE' }); alert('Your account and associated data were deleted.'); handleLogout(); } catch (err) { alert(err.message); } }
 function applyTheme(theme) { const resolved = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : theme; document.body.dataset.theme = resolved; localStorage.setItem('sb_theme', theme); }
 
 // COMPANY RECRUITER LOADERS

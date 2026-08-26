@@ -6,6 +6,7 @@ let currentUser = null;
 let currentProfile = null;
 let currentRole = 'student';
 let authToken = localStorage.getItem('sb_token') || null;
+let pendingStudentOtpEmail = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (authToken) {
@@ -122,6 +123,7 @@ function navigateTo(viewId) {
   else if (viewId === 'profile') loadProfileView();
   else if (viewId === 'academics') loadAcademicsView();
   else if (viewId === 'skills') loadSkillsView();
+  else if (viewId === 'certificates') loadCertificatesView();
   else if (viewId === 'assessments') loadAssessmentsView();
   else if (viewId === 'portfolio') loadPortfolioView();
   else if (viewId === 'ai-skill-analyzer') loadAISkillAnalyzerView();
@@ -190,11 +192,25 @@ async function handleStudentRegisterSubmit(e) {
   const password = document.getElementById('stu-reg-pass').value.trim();
   const confirmPassword = document.getElementById('stu-reg-confirm-pass').value.trim();
   const passwordError = document.getElementById('stu-reg-password-error');
+  const otpInput = document.getElementById('stu-reg-otp');
 
   passwordError.classList.toggle('hidden', password === confirmPassword);
   if (password !== confirmPassword) return;
 
   try {
+    if (pendingStudentOtpEmail !== email) {
+      const otp = await apiFetch('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
+      pendingStudentOtpEmail = email;
+      document.getElementById('student-otp-block').classList.remove('hidden');
+      document.getElementById('stu-reg-submit-btn').textContent = 'Verify OTP & Create Account';
+      if (otp.devCode && otpInput) otpInput.value = otp.devCode;
+      return;
+    }
+    if (!otpInput || !/^\d{6}$/.test(otpInput.value.trim())) {
+      alert('Enter the 6-digit OTP sent to your email.');
+      return;
+    }
+    await apiFetch('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email, otp: otpInput.value.trim() }) });
     const data = await apiFetch('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ fullName, username, email, mobile, password, confirmPassword, role: 'student' })
@@ -203,6 +219,7 @@ async function handleStudentRegisterSubmit(e) {
     localStorage.setItem('sb_token', authToken);
     currentUser = data.user;
     currentProfile = data.profile;
+    pendingStudentOtpEmail = null;
     closeModal('student-auth-modal');
     alert(`Account created. Your Student ID is ${data.studentId}. Complete your profile to continue.`);
     switchPortalRole('student');
@@ -373,6 +390,16 @@ async function loadDashboardHome() {
         <button class="btn-saas btn-primary w-full" onclick="navigateTo('opportunities')">View & Apply</button>
       </div>
     `).join('');
+    const skills = await apiFetch('/student/skills');
+    document.getElementById('dash-skills-list').innerHTML = (skills.technical || []).length ? skills.technical.map(skill => `<div>${skill.skillName || skill.skill_name}: ${skill.proficiencyPercentage}% | ${skill.scoreOutOfTen}/10</div>`).join('') : '<span>No skills added yet</span>';
+    const portfolio = await apiFetch('/student/portfolio');
+    document.getElementById('stat-skills').textContent = skills.technical?.length || 0;
+    document.getElementById('stat-projects').textContent = portfolio.projects?.length || 0;
+    document.getElementById('stat-certs').textContent = portfolio.certificates?.length || 0;
+    document.getElementById('stat-score').textContent = 'Calculated from profile';
+    document.getElementById('dash-certificates-count').textContent = `${(portfolio.certificates || []).length} certificate(s)`;
+    const match = opps[0];
+    document.getElementById('dash-ai-match').textContent = match ? `${match.match_percentage}% match` : 'No job match available';
   } catch (e) {}
 }
 
@@ -468,13 +495,24 @@ async function loadPortfolioView() {
     document.getElementById('portfolio-tab-content').innerHTML = `<h2 class="mb-3">Projects</h2>${projects || '<p class="mb-4">No projects recorded.</p>'}<h2 class="mb-3">Certificates</h2>${certificates || '<p class="mb-4">No certificates recorded.</p>'}<h2 class="mb-3">Achievements</h2>${achievements || '<p>No achievements recorded.</p>'}`;
   } catch (e) {}
 }
+async function loadCertificatesView() {
+  try {
+    const data = await apiFetch('/student/portfolio');
+    const certificates = data.certificates || [];
+    document.getElementById('certificates-page-list').innerHTML = certificates.length ? certificates.map(cert => `<div class="saas-card mb-3 flex-between"><div><h4>${cert.certificateName || cert.name}</h4><p class="text-xs">${cert.category || 'Other'} · ${cert.issuer || ''} · ${cert.issueDate || ''}</p></div><div>${cert.certificateUrl ? `<a class="btn-saas btn-outline" href="${cert.certificateUrl}" target="_blank" rel="noreferrer">View</a>` : ''}<button class="btn-saas btn-outline" onclick="deleteCertificate(${cert.id})">Delete</button></div></div>`).join('') : '<div class="saas-card"><p>No certificates added yet</p><button class="btn-saas btn-primary mt-3" onclick="document.getElementById(\'certificate-name\').focus()">+ Add Your First Certificate</button></div>';
+  } catch (e) { document.getElementById('certificates-page-list').textContent = 'Unable to load certificates.'; }
+}
 async function handleCertificateSubmit(event) { event.preventDefault(); try { await apiFetch('/student/certificates', { method: 'POST', body: JSON.stringify({ certificateName: document.getElementById('certificate-name').value.trim(), category: document.getElementById('certificate-category').value, issuer: document.getElementById('certificate-issuer').value.trim(), issueDate: document.getElementById('certificate-date').value, credentialId: document.getElementById('certificate-credential').value.trim(), certificateUrl: document.getElementById('certificate-url').value.trim() }) }); event.target.reset(); alert('Certificate saved.'); loadPortfolioView(); } catch (err) { alert(err.message); } }
-async function deleteCertificate(id) { if (!window.confirm('Are you sure you want to delete this certificate?')) return; try { await apiFetch(`/student/certificates/${id}`, { method: 'DELETE' }); loadPortfolioView(); } catch (err) { alert(err.message); } }
+async function deleteCertificate(id) { if (!window.confirm('Are you sure you want to delete this certificate?')) return; try { await apiFetch(`/student/certificates/${id}`, { method: 'DELETE' }); if (!document.getElementById('view-certificates').classList.contains('hidden')) loadCertificatesView(); else loadPortfolioView(); } catch (err) { alert(err.message); } }
+function openAiAssistant() { document.getElementById('ai-assistant-panel').classList.remove('hidden'); }
+function closeAiAssistant() { document.getElementById('ai-assistant-panel').classList.add('hidden'); }
+function askAiQuick(message) { document.getElementById('student-ai-chat-input').value = message; document.getElementById('student-ai-chat-input').focus(); }
+async function handleAiChatSubmit(event) { event.preventDefault(); const input = document.getElementById('student-ai-chat-input'); const log = document.getElementById('student-ai-chat-log'); const message = input.value.trim(); if (!message) return; log.insertAdjacentHTML('beforeend', `<div class="chat-bubble user">${message}</div>`); input.value = ''; try { const data = await apiFetch('/ai/chat', { method: 'POST', body: JSON.stringify({ message }) }); log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${data.reply}</div>`); log.scrollTop = log.scrollHeight; } catch (err) { log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${err.message}</div>`); } }
 async function loadAISkillAnalyzerView() {
   try {
     const data = await apiFetch('/student/jobs/101');
     document.getElementById('ai-match-pct').textContent = `${data.matchPercentage}% Match`;
-    document.getElementById('ai-match-pct').insertAdjacentHTML('afterend', `<p class="mt-2">${data.recommendationLevel}</p><p class="text-xs mt-2">${data.nonGuarantee}</p><table class="saas-table mt-3"><thead><tr><th>Skill</th><th>Required</th><th>Student</th><th>Result</th></tr></thead><tbody>${(data.skillGaps || []).map(item => `<tr><td>${item.skill}</td><td>${item.reqLevel}</td><td>${item.studentLevel}</td><td>${item.result === 'Match' ? '✓ Match' : '⚠ Gap'}</td></tr>`).join('')}</tbody></table>`);
+    document.getElementById('ai-match-details').innerHTML = `<p class="mt-2">${data.recommendationLevel}</p><p class="text-xs mt-2">${data.nonGuarantee}</p><table class="saas-table mt-3"><thead><tr><th>Skill</th><th>Required</th><th>Student</th><th>Result</th></tr></thead><tbody>${(data.skillGaps || []).map(item => `<tr><td>${item.skill}</td><td>${item.reqLevel}</td><td>${item.studentLevel}</td><td>${item.result === 'Match' ? '✓ Match' : '⚠ Gap'}</td></tr>`).join('')}</tbody></table>`;
   } catch (e) {}
 }
 async function loadOpportunitiesView() {

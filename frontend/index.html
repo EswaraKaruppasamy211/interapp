@@ -112,9 +112,11 @@
         <a href="#" class="sidebar-item" data-target="profile" onclick="navigateTo('profile')"><i class="fa-solid fa-user"></i> <span>My Profile</span></a>
         <a href="#" class="sidebar-item" data-target="academics" onclick="navigateTo('academics')"><i class="fa-solid fa-graduation-cap"></i> <span>Academics</span></a>
         <a href="#" class="sidebar-item" data-target="skills" onclick="navigateTo('skills')"><i class="fa-solid fa-code"></i> <span>Skills</span></a>
+        <a href="#" class="sidebar-item" data-target="certificates" onclick="navigateTo('certificates')"><i class="fa-solid fa-certificate"></i> <span>Certificates</span></a>
         <a href="#" class="sidebar-item" data-target="assessments" onclick="navigateTo('assessments')"><i class="fa-solid fa-chart-simple"></i> <span>Assessments</span></a>
         <a href="#" class="sidebar-item" data-target="portfolio" onclick="navigateTo('portfolio')"><i class="fa-solid fa-folder-open"></i> <span>My Portfolio</span></a>
         <a href="#" class="sidebar-item" data-target="ai-skill-analyzer" onclick="navigateTo('ai-skill-analyzer')"><i class="fa-solid fa-wand-magic-sparkles"></i> <span>AI Skill Analyzer</span></a>
+        <a href="#" class="sidebar-item" data-target="ai-assistant" onclick="openAiAssistant()"><i class="fa-solid fa-robot"></i> <span>AI Career Assistant</span></a>
         <a href="#" class="sidebar-item" data-target="opportunities" onclick="navigateTo('opportunities')"><i class="fa-solid fa-briefcase"></i> <span>Opportunities</span></a>
         <a href="#" class="sidebar-item" data-target="applications" onclick="navigateTo('applications')"><i class="fa-solid fa-paper-plane"></i> <span>Applications</span></a>
         <a href="#" class="sidebar-item" data-target="campus-drives" onclick="navigateTo('campus-drives')"><i class="fa-solid fa-building-columns"></i> <span>Campus Drives</span></a>
@@ -155,15 +157,20 @@
         </div>
         <div class="grid-3 gap-4 mb-6">
           <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">CGPA</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-cgpa">8.80</div></div></div>
-          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">TECHNICAL SKILLS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-skills">6</div></div></div>
-          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">PORTFOLIO PROJECTS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-projects">2</div></div></div>
-          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">CERTIFICATES</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-certs">1</div></div></div>
-          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">APPLICATIONS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-apps">2</div></div></div>
-          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">SKILL SCORE</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-score">82 / 100</div></div></div>
+          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">TECHNICAL SKILLS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-skills">0</div></div></div>
+          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">PORTFOLIO PROJECTS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-projects">0</div></div></div>
+          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">CERTIFICATES</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-certs">0</div></div></div>
+          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">APPLICATIONS</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-apps">0</div></div></div>
+          <div class="stat-card"><div><div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">SKILL SCORE</div><div style="font-size: 1.4rem; font-weight: 800;" id="stat-score">Not available</div></div></div>
         </div>
         <div class="saas-card mb-6">
           <div class="flex-between mb-4"><h3 style="font-weight: 700;">Recommended Jobs</h3><button class="btn-saas btn-outline" onclick="navigateTo('opportunities')">Browse All</button></div>
           <div id="dash-recommended-jobs" class="grid-3 gap-4"></div>
+        </div>
+        <div class="grid-3 gap-4 mb-6">
+          <div class="saas-card"><h3>My Skills</h3><div id="dash-skills-list" class="mt-2 text-sm"></div><button class="btn-saas btn-outline mt-3" onclick="navigateTo('skills')">+ Add Skill</button></div>
+          <div class="saas-card"><h3>Certificates</h3><div id="dash-certificates-count" class="mt-2"></div><button class="btn-saas btn-outline mt-3" onclick="navigateTo('certificates')">View Certificates</button><button class="btn-saas btn-primary mt-2" onclick="navigateTo('certificates')">+ Add Certificate</button></div>
+          <div class="saas-card"><h3>AI Career Analysis</h3><div id="dash-ai-match" class="mt-2"></div><button class="btn-saas btn-primary mt-3" onclick="navigateTo('ai-skill-analyzer')">View AI Analysis</button></div>
         </div>
       </section>
 
@@ -203,9 +210,10 @@
 
       <section id="view-academics" class="workspace-view hidden"><h1 class="mb-4">Academics</h1><div class="saas-card mb-4"><div class="grid-3 gap-4"><label class="text-xs font-bold">10th Percentage<input id="academic-tenth" type="number" min="0" max="100" step="0.01" class="saas-input"></label><label class="text-xs font-bold">12th Percentage<input id="academic-twelfth" type="number" min="0" max="100" step="0.01" class="saas-input"></label><label class="text-xs font-bold">Backlogs<input id="academic-backlogs" type="number" min="0" class="saas-input"></label></div><div id="academic-cgpa" class="mt-3" style="font-weight:800;color:var(--text-blue);"></div><button class="btn-saas btn-primary mt-3" onclick="saveAcademicSummary()">Save Academic Summary</button></div><div class="saas-card"><table class="saas-table"><thead><tr><th>Semester</th><th>GPA</th><th>Status</th></tr></thead><tbody id="semester-table-body"></tbody></table></div></section>
       <section id="view-skills" class="workspace-view hidden"><h1 class="mb-4">Skills Matrix</h1><div class="saas-card mb-4"><form onsubmit="handleSkillSubmit(event)" class="grid-3 gap-3"><input id="skill-entry-name" class="saas-input" placeholder="Skill name" required><input id="skill-entry-category" class="saas-input" placeholder="Category" required><input id="skill-entry-percent" type="number" min="0" max="100" class="saas-input" placeholder="Proficiency %" required><button class="btn-saas btn-primary" type="submit">Add Skill</button></form><p class="text-xs mt-2" style="color:var(--text-muted);">Individual score is calculated as proficiency percentage divided by 10. Overall AI Skill Score is separate.</p></div><div class="saas-card"><div id="technical-skills-list" class="flex-col gap-3"></div></div></section>
+      <section id="view-certificates" class="workspace-view hidden"><h1 class="mb-4">Certificates</h1><div class="saas-card mb-4"><form onsubmit="handleCertificateSubmit(event)" class="grid-3 gap-3"><input id="certificate-name" class="saas-input" placeholder="Certificate name" required><select id="certificate-category" class="saas-input"><option>Technical Certification</option><option>Conference</option><option>Symposium</option><option>Workshop</option><option>Seminar</option><option>Hackathon</option><option>Internship</option><option>Course Completion</option><option>Academic Achievement</option><option>Competition</option><option>Paper Presentation</option><option>Other</option></select><input id="certificate-issuer" class="saas-input" placeholder="Issuing organization"><input id="certificate-date" type="date" class="saas-input"><input id="certificate-credential" class="saas-input" placeholder="Credential ID"><input id="certificate-url" type="url" class="saas-input" placeholder="Certificate URL" required><button class="btn-saas btn-primary" type="submit">+ Add Certificate</button></form></div><div id="certificates-page-list"></div></section>
       <section id="view-assessments" class="workspace-view hidden"><h1 class="mb-4">Assessments</h1><div class="saas-card mb-4"><h2 id="assess-overall-score">82 / 100</h2></div><div id="assessments-list-container"></div></section>
       <section id="view-portfolio" class="workspace-view hidden"><h1 class="mb-4">Portfolio</h1><div class="saas-card mb-4"><form onsubmit="handleCertificateSubmit(event)" class="grid-3 gap-3"><input id="certificate-name" class="saas-input" placeholder="Certificate name" required><select id="certificate-category" class="saas-input"><option>Conference</option><option>Symposium</option><option>Workshop</option><option>Seminar</option><option>Hackathon</option><option>Internship</option><option>Technical Certification</option><option>Online Course</option><option>Course Completion</option><option>Academic Achievement</option><option>Competition</option><option>Paper Presentation</option><option>Other</option></select><input id="certificate-issuer" class="saas-input" placeholder="Issuing organization"><input id="certificate-date" type="date" class="saas-input"><input id="certificate-credential" class="saas-input" placeholder="Credential ID"><input id="certificate-url" type="url" class="saas-input" placeholder="Certificate URL" required><button class="btn-saas btn-primary" type="submit">Add Certificate</button></form></div><div id="portfolio-tab-content"></div></section>
-      <section id="view-ai-skill-analyzer" class="workspace-view hidden"><h1 class="mb-4">AI Skill Analyzer</h1><div class="saas-card mb-4"><h2 id="ai-match-pct">92% Match</h2></div></section>
+      <section id="view-ai-skill-analyzer" class="workspace-view hidden"><h1 class="mb-4">AI Skill Analyzer</h1><div class="saas-card mb-4"><h2 id="ai-match-pct">Calculating match...</h2><div id="ai-match-details"></div></div></section>
       <section id="view-opportunities" class="workspace-view hidden"><h1 class="mb-4">Opportunities</h1><div id="opportunities-list-container" class="grid-2 gap-4"></div></section>
       <section id="view-applications" class="workspace-view hidden"><h1 class="mb-4">Applications</h1><div id="applications-list-container"></div></section>
       <section id="view-notifications" class="workspace-view hidden"><h1 class="mb-4">Notifications</h1><div id="notifications-list-container"></div></section>
@@ -331,7 +339,8 @@
           <input type="password" id="stu-reg-confirm-pass" class="saas-input" placeholder="Repeat your password" minlength="8" required />
           <div id="stu-reg-password-error" class="text-xs hidden" style="color:var(--text-red);">Passwords do not match</div>
         </div>
-        <button type="submit" class="btn-saas btn-primary w-full mb-3" style="padding:0.75rem;">Create Student Account</button>
+        <div id="student-otp-block" class="mb-3 hidden"><label class="block text-xs font-bold mb-1">Email Verification OTP</label><input type="text" id="stu-reg-otp" class="saas-input" inputmode="numeric" maxlength="6" placeholder="Enter 6-digit OTP" /></div>
+        <button id="stu-reg-submit-btn" type="submit" class="btn-saas btn-primary w-full mb-3" style="padding:0.75rem;">Send OTP</button>
         <p class="text-xs text-center" style="color:var(--text-muted);">Already registered? <a href="#" onclick="switchStudentAuthTab('login')" style="color:var(--text-blue); font-weight:700;">Sign In</a></p>
       </form>
     </div>
@@ -441,6 +450,9 @@
   <div class="watermark-sticky-badge">
     <i class="fa-solid fa-code text-blue"></i> Created by @Eswara Karuppasamy K
   </div>
+
+  <button id="floating-ai-button" class="floating-ai-button" onclick="openAiAssistant()">🤖 Ask AI</button>
+  <div id="ai-assistant-panel" class="ai-assistant-panel hidden"><div class="flex-between"><h3>🤖 AI Career Assistant</h3><button class="btn-saas btn-outline" onclick="closeAiAssistant()">×</button></div><p class="text-xs mt-2">Ask me about your skills, jobs, match score and career profile.</p><div class="ai-quick-actions mt-3"><button onclick="askAiQuick('Analyze my profile')">Analyze My Profile</button><button onclick="askAiQuick('Explain my match score')">Explain My Match Score</button><button onclick="askAiQuick('Find my skill gaps')">Find Skill Gaps</button><button onclick="askAiQuick('How can I improve my profile?')">Improve My Profile</button><button onclick="askAiQuick('How should I prepare for this job?')">Prepare for This Job</button></div><div id="student-ai-chat-log" class="chat-log mt-3"><div class="chat-bubble bot">Hi! I can analyze your saved SkillBridge profile and career opportunities.</div></div><form onsubmit="handleAiChatSubmit(event)" class="flex-align gap-2 mt-3"><input id="student-ai-chat-input" class="saas-input" placeholder="Ask a question" required><button class="btn-saas btn-primary" type="submit">Send</button></form></div>
 
   <script src="app.js"></script>
 </body>

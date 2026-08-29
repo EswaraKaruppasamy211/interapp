@@ -151,6 +151,7 @@ let state = {
   notifications: {},
   preferences: {},
   settings: {},
+  crossRecommendations: [],
   certificates: {},
   projects: {},
   placements: {},
@@ -334,6 +335,23 @@ function seedData() {
       min_cgpa: 7.5,
       min_ai_score: 75,
       deadline: '2026-10-30'
+    },
+    {
+      id: 102,
+      company_id: 2,
+      companyId: 'CMP-10002',
+      company_name: 'DataSoft Systems',
+      title: 'AI Product Engineer',
+      description: 'Build AI-powered enterprise tools and data interfaces.',
+      location: 'Hyderabad / Hybrid',
+      job_type: 'Full-Time',
+      salary_stipend: '₹ 14,00,000 P.A.',
+      required_skills: ['Python', 'SQL', 'Java', 'React'],
+      preferred_skills: ['TensorFlow', 'PyTorch'],
+      min_cgpa: 7.5,
+      min_ai_score: 50,
+      deadline: '2026-11-30',
+      status: 'Open'
     }
   ];
 
@@ -362,6 +380,183 @@ function seedData() {
 
 seedData();
 restoreState();
+
+function ensureDefaultCrossMatchData() {
+  if (!state.companies.some(company => company.companyId === 'CMP-10002')) {
+    state.companies.push({
+      id: 2,
+      companyId: 'CMP-10002',
+      name: 'DataSoft Systems',
+      logo: '📊',
+      industry: 'AI & Data Science Solutions',
+      manager_name: 'Ananya Roy',
+      manager_desig: 'Senior Technical Recruiter',
+      min_cgpa: 8.0,
+      min_ai_score: 80,
+      required_skills: ['Python', 'SQL', 'Java', 'React'],
+      preferred_skills: ['TensorFlow', 'PyTorch'],
+      coding_level: 'Advanced',
+      certs: ['Data Science Professional']
+    });
+  }
+
+  if (!state.jobs.some(job => job.companyId === 'CMP-10002')) {
+    state.jobs.push({
+      id: 102,
+      company_id: 2,
+      companyId: 'CMP-10002',
+      company_name: 'DataSoft Systems',
+      title: 'AI Product Engineer',
+      description: 'Build AI-powered enterprise tools and data interfaces.',
+      location: 'Hyderabad / Hybrid',
+      job_type: 'Full-Time',
+      salary_stipend: '₹ 14,00,000 P.A.',
+      required_skills: ['Python', 'SQL', 'Java', 'React'],
+      preferred_skills: ['TensorFlow', 'PyTorch'],
+      min_cgpa: 7.5,
+      min_ai_score: 50,
+      deadline: '2026-11-30',
+      status: 'Open'
+    });
+  }
+}
+
+ensureDefaultCrossMatchData();
+
+function resolveStudentSettings(studentId) {
+  return {
+    jobNotifications: true,
+    internshipNotifications: true,
+    campusDriveNotifications: true,
+    applicationNotifications: true,
+    interviewNotifications: true,
+    placementNotifications: true,
+    profileVisibility: 'public',
+    recruiterDiscovery: true,
+    crossRecommendEnabled: true,
+    excludedCompanyIds: [],
+    showSkills: true,
+    showAcademicInfo: true,
+    showContactInfo: false,
+    theme: 'system',
+    ...(state.settings[studentId] || {})
+  };
+}
+
+function addNotificationForUser(userId, notification) {
+  if (!userId || !notification) return null;
+  const entry = {
+    id: Date.now() + Math.random(),
+    ...notification,
+    is_read: Boolean(notification.is_read),
+    created_at: notification.created_at || new Date().toISOString()
+  };
+  if (!state.notifications[userId]) state.notifications[userId] = [];
+  state.notifications[userId].unshift(entry);
+  return entry;
+}
+
+function buildCrossRecommendationRecords(studentId, sourceCompanyId, sourceJobId) {
+  const student = state.users.find(user => user.id === studentId && user.role === 'student');
+  if (!student) return [];
+
+  const settings = resolveStudentSettings(studentId);
+  if (settings.crossRecommendEnabled === false) return [];
+
+  const excludedCompanyIds = new Set((settings.excludedCompanyIds || []).map(String));
+  const applicationCompanyIds = new Set(
+    state.applications
+      .filter(app => app.student_id === studentId && ['Rejected', 'Withdrawn', 'Rejected by Company'].includes(app.status))
+      .map(app => String(app.companyId))
+  );
+
+  const profile = {
+    ...(state.studentProfiles[studentId] || {}),
+    current_backlogs: state.backlogs[studentId]?.current_backlogs ?? 0
+  };
+  const skills = state.userSkills[studentId] || [];
+  const studentSkillsForMatch = skills.map(s => ({
+    skill_name: s.skill_name,
+    level_pct: Number(s.level_pct || 0)
+  }));
+
+  const qualifyingJobs = state.jobs
+    .filter(job => {
+      if (!job || String(job.companyId) === String(sourceCompanyId)) return false;
+      if (excludedCompanyIds.has(String(job.companyId))) return false;
+      if (applicationCompanyIds.has(String(job.companyId))) return false;
+      if (job.status === 'Closed') return false;
+      const match = calculateStudentJobMatch(profile, job, studentSkillsForMatch);
+      const minThreshold = Number(job.min_ai_score || job.minimum_ai_score || 80);
+      return match.matchPercentage >= minThreshold;
+    })
+    .map(job => ({ job, match: calculateStudentJobMatch(profile, job, studentSkillsForMatch) }))
+    .sort((a, b) => b.match.matchPercentage - a.match.matchPercentage)
+    .slice(0, 5);
+
+  const created = [];
+  for (const item of qualifyingJobs) {
+    const targetCompanyId = item.job.companyId;
+    const targetJobId = item.job.id;
+
+    const alreadyRecorded = state.crossRecommendations.some(rec =>
+      rec.student_id === studentId &&
+      rec.target_job_id === targetJobId &&
+      rec.source_trigger_job_id === sourceJobId &&
+      rec.status !== 'dismissed'
+    );
+
+    if (alreadyRecorded) continue;
+
+    const recommendation = {
+      id: `xrec-${Date.now()}-${studentId}-${targetJobId}`,
+      student_id: studentId,
+      source_trigger_job_id: sourceJobId || null,
+      source_company_id: sourceCompanyId || null,
+      target_job_id: targetJobId,
+      target_company_id: targetCompanyId,
+      score: item.match.matchPercentage,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+
+    state.crossRecommendations.push(recommendation);
+    created.push(recommendation);
+
+    const companyUser = state.users.find(user => user.role === 'company' && String(user.companyId) === String(targetCompanyId));
+    if (companyUser) {
+      addNotificationForUser(companyUser.id, {
+        type: 'cross-recommendation',
+        title: `Strong match for ${item.job.title}`,
+        message: `A candidate shortlisted at another company scores ${item.match.matchPercentage}% against your ${item.job.title} posting. Want to review?`,
+        targetCompanyId,
+        targetJobId,
+        studentId,
+        score: item.match.matchPercentage,
+        recommendationId: recommendation.id,
+        is_read: false
+      });
+    }
+  }
+
+  if (created.length) {
+    addNotificationForUser(studentId, {
+      type: 'recommendation',
+      title: 'Profile recommended to more companies',
+      message: `Your profile was recommended to ${created.length} additional company${created.length > 1 ? 'ies' : 'y'} based on your recent shortlist.`,
+      recommendationCount: created.length,
+      is_read: false
+    });
+  }
+
+  persistState();
+  return created;
+}
+
+function triggerCrossRecommendations(studentId, sourceCompanyId, sourceJobId) {
+  if (!studentId || !sourceCompanyId) return [];
+  return buildCrossRecommendationRecords(studentId, sourceCompanyId, sourceJobId);
+}
 
 // Unique AI Employability Skill Score Engine
 function calculateSkillScore(studentId) {
@@ -628,21 +823,7 @@ const server = http.createServer(async (req, res) => {
       const completed = (records || []).filter(record => record.gpa !== '' && record.gpa !== null && record.gpa !== undefined && Number.isFinite(Number(record.gpa)));
       return completed.length ? Number((completed.reduce((sum, record) => sum + Number(record.gpa), 0) / completed.length).toFixed(2)) : null;
     };
-      const getStudentSettings = studentId => ({
-        jobNotifications: true,
-        internshipNotifications: true,
-        campusDriveNotifications: true,
-        applicationNotifications: true,
-        interviewNotifications: true,
-        placementNotifications: true,
-        profileVisibility: 'public',
-        recruiterDiscovery: true,
-        showSkills: true,
-        showAcademicInfo: true,
-        showContactInfo: false,
-        theme: 'system',
-        ...(state.settings[studentId] || {})
-      });
+      const getStudentSettings = studentId => resolveStudentSettings(studentId);
       const calculateProfileCompletion = studentId => {
         const profile = state.studentProfiles[studentId] || {};
         const academics = state.academicRecords[studentId] || [];
@@ -932,7 +1113,7 @@ const server = http.createServer(async (req, res) => {
       }
       state.preferences[userId] = { jobRoles: body.preferences?.jobRoles || [], industries: body.preferences?.industries || [], locations: body.preferences?.locations || [], opportunityTypes: body.preferences?.opportunityTypes || [] };
       state.studentProfiles[userId].onboarding_complete = true;
-      state.settings[userId] = { ...(state.settings[userId] || {}), jobNotifications: true, internshipNotifications: true, campusDriveNotifications: true, applicationNotifications: true, interviewNotifications: true, placementNotifications: true, profileVisibility: 'public', recruiterDiscovery: true, showSkills: true, showAcademicInfo: true, showContactInfo: false, theme: 'system' };
+      state.settings[userId] = { ...(state.settings[userId] || {}), jobNotifications: true, internshipNotifications: true, campusDriveNotifications: true, applicationNotifications: true, interviewNotifications: true, placementNotifications: true, profileVisibility: 'public', recruiterDiscovery: true, crossRecommendEnabled: true, excludedCompanyIds: [], showSkills: true, showAcademicInfo: true, showContactInfo: false, theme: 'system' };
       return sendJSON(200, { success: true, profile: state.studentProfiles[userId], cgpa: state.studentProfiles[userId].cgpa });
     }
     if (pathname === '/api/student/academics' && req.method === 'GET') {
@@ -1031,7 +1212,12 @@ const server = http.createServer(async (req, res) => {
       const authUser = requireStudent();
       if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
       const body = await parseJSON(req);
-      state.settings[authUser.id] = { ...getStudentSettings(authUser.id), ...body };
+      const normalizedExcluded = Array.isArray(body.excludedCompanyIds)
+        ? body.excludedCompanyIds
+        : (typeof body.excludedCompanyIds === 'string'
+          ? body.excludedCompanyIds.split(',').map(value => value.trim()).filter(Boolean)
+          : []);
+      state.settings[authUser.id] = { ...getStudentSettings(authUser.id), ...body, excludedCompanyIds: normalizedExcluded, crossRecommendEnabled: body.crossRecommendEnabled !== undefined ? Boolean(body.crossRecommendEnabled) : getStudentSettings(authUser.id).crossRecommendEnabled };
       return sendJSON(200, { success: true, settings: getStudentSettings(authUser.id) });
     }
     if (pathname === '/api/student/change-password' && req.method === 'PUT') {
@@ -1852,13 +2038,42 @@ const server = http.createServer(async (req, res) => {
       const comp = state.companies.find(c => c.companyId === compId) || state.companies[0];
       const body = await parseJSON(req);
 
-      const newJob = { id: nextJobId(), company_id: comp.id, companyId: comp.companyId, company_name: comp.name, title: body.title, location: body.location || 'Remote', salary_stipend: body.salary_stipend || '₹ 12,00,000 P.A.', required_skills: (body.required_skills || 'Java,SQL').split(','), min_cgpa: Number(body.min_cgpa || 7.5), deadline: body.deadline || '2026-11-30' };
+      const requiredSkills = String(body.required_skills || 'Java,SQL')
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean)
+        .map(value => {
+          const match = value.match(/^(.+?)\s*[:>=]\s*(\d+)\s*%?$/);
+          return match ? { name: match[1].trim(), minimum_level: Number(match[2]) } : { name: value, minimum_level: 70 };
+        });
+      const newJob = {
+        id: nextJobId(),
+        company_id: comp.id,
+        companyId: comp.companyId,
+        company_name: comp.name,
+        title: String(body.title || '').trim(),
+        location: body.location || 'Remote',
+        salary_stipend: body.salary_stipend || '₹ 12,00,000 P.A.',
+        required_skills: requiredSkills,
+        min_cgpa: Number(body.min_cgpa || 0),
+        min_ai_score: Number(body.min_ai_score ?? body.minimum_ai_score ?? 70),
+        department: String(body.department || '').trim(),
+        max_backlogs: body.max_backlogs === '' || body.max_backlogs == null ? null : Number(body.max_backlogs),
+        deadline: body.deadline || '2026-11-30',
+        status: 'Open'
+      };
       state.jobs.unshift(newJob);
       state.users.filter(user => user.role === 'student').forEach(student => {
-        const match = calculateCompanyMatch(student.id, comp);
-        if (match.isEligible) {
+        const studentProfile = {
+          ...(state.studentProfiles[student.id] || {}),
+          current_backlogs: state.backlogs[student.id]?.current_backlogs ?? 0
+        };
+        const match = calculateStudentJobMatch(studentProfile, newJob, state.userSkills[student.id] || []);
+        const minimumScore = Number(newJob.min_ai_score ?? 70);
+        if (match.matchPercentage >= minimumScore && match.gaps.length === 0 && isStudentEligibleForJob(studentProfile, newJob, state.userSkills[student.id] || [])) {
           if (!state.notifications[student.id]) state.notifications[student.id] = [];
-          state.notifications[student.id].unshift({ id: Date.now() + student.id, type: 'job-match', title: `New Job Match: ${newJob.title}`, message: `${comp.name} matches your profile at ${match.matchPercentage}%.`, jobId: newJob.id, is_read: false, created_at: new Date().toISOString() });
+          const duplicate = state.notifications[student.id].some(notification => notification.type === 'job-match' && notification.jobId === newJob.id);
+          if (!duplicate) state.notifications[student.id].unshift({ id: Date.now() + student.id, type: 'job-match', title: `New Job Match: ${newJob.title}`, message: `${comp.name} matches your profile at ${match.matchPercentage}%.`, jobId: newJob.id, is_read: false, created_at: new Date().toISOString() });
         }
       });
       return sendJSON(201, { success: true, job: newJob });
@@ -1982,7 +2197,41 @@ const server = http.createServer(async (req, res) => {
       application.last_updated = new Date().toISOString().split('T')[0];
       if (!application.stageHistory) application.stageHistory = [];
       application.stageHistory.push({ from: previousStage, to: newStage, timestamp: new Date().toISOString(), movedBy: authUser.email });
+
+      if (['Shortlisted', 'Assessment', 'Technical Interview', 'HR Interview', 'Final Review', 'Selected'].includes(newStage)) {
+        triggerCrossRecommendations(application.student_id, authUser.companyId, application.job_id);
+      }
+
       return sendJSON(200, { success: true, application });
+    }
+
+    if (pathname === '/api/company/cross-recommendations' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const recommendations = state.crossRecommendations
+        .filter(rec => String(rec.target_company_id) === String(authUser.companyId))
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return sendJSON(200, { recommendations });
+    }
+
+    if (pathname.match(/^\/api\/company\/cross-recommendations\/[^/]+\/status$/) && req.method === 'PUT') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const recommendationId = pathname.split('/')[4];
+      const recommendation = state.crossRecommendations.find(rec => rec.id === recommendationId && String(rec.target_company_id) === String(authUser.companyId));
+      if (!recommendation) return sendJSON(404, { error: 'Recommendation not found' });
+      const body = await parseJSON(req);
+      recommendation.status = body.status || recommendation.status;
+      return sendJSON(200, { success: true, recommendation });
+    }
+
+    if (pathname === '/api/student/cross-recommendations' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const recommendations = state.crossRecommendations
+        .filter(rec => rec.student_id === authUser.id)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return sendJSON(200, { recommendations });
     }
 
     // ASSESSMENT SYSTEM

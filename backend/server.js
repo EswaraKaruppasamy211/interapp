@@ -2087,9 +2087,13 @@ const server = http.createServer(async (req, res) => {
       const app = state.applications.find(a => a.id === Number(applicationId) && a.companyId === companyId);
       if (!app) return sendJSON(404, { error: 'Application not found for this company.' });
       if (app) {
+        const previousStage = app.status;
         app.status = newStage;
         app.last_updated = new Date().toISOString().split('T')[0];
         app.next_step = `Moved to ${newStage} stage.`;
+        if (previousStage !== newStage && ['Shortlisted', 'Assessment', 'Technical Interview', 'HR Interview', 'Final Review', 'Selected'].includes(newStage)) {
+          triggerCrossRecommendations(app.student_id, companyId, app.job_id);
+        }
       }
       return sendJSON(200, { success: true, application: app });
     }

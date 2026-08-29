@@ -1459,7 +1459,10 @@ async function loadCompanyATSPipeline() {
         </div>
       `;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    const board = document.getElementById('ats-kanban-board');
+    if (board) board.innerHTML = `<p class="text-sm" style="color:var(--text-muted);">Unable to load ATS pipeline: ${e.message}</p>`;
+  }
 }
 
 async function handleMoveCandidateStage(appId, newStage) {
@@ -1493,9 +1496,16 @@ async function handlePostJobSubmit(e) {
 
 async function loadTalentFinder() {
   try {
-    const students = await apiFetch('/college/students');
-    document.getElementById('talent-candidates-list').innerHTML = students.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.college} • ${s.department}</div><div style="font-size:0.85rem; font-weight:800; color:var(--text-emerald);" class="mt-2">CGPA: ${s.cgpa || 8.8}</div></div>`).join('');
-  } catch (e) {}
+    const students = await apiFetch('/company/talent-finder');
+    const candidates = Array.isArray(students) ? students : (students.candidates || []);
+    const container = document.getElementById('talent-candidates-list');
+    container.innerHTML = candidates.length
+      ? candidates.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name || 'Student'}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.studentId || ''} • ${s.department || ''}</div><div style="font-size:0.85rem; font-weight:800; color:var(--text-emerald);" class="mt-2">AI Match: ${s.matchPercentage || 0}% · ${s.recommendationLevel || 'Match'}</div></div>`).join('')
+      : '<p class="text-sm" style="color:var(--text-muted);">No eligible candidates match this company profile.</p>';
+  } catch (e) {
+    const container = document.getElementById('talent-candidates-list');
+    if (container) container.textContent = `Unable to load Talent Finder: ${e.message}`;
+  }
 }
 
 // COLLEGE ADMIN LOADERS

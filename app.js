@@ -1203,15 +1203,18 @@ async function deleteStudentProject(projectId) {
 async function loadSettingsView() {
   try {
     const data = await apiFetch('/student/settings');
+    const settings = data.settings || data;
     const form = document.getElementById('student-settings-form');
     if (!form) return;
-    document.getElementById('settings-job-notifications').checked = !!(data.jobNotifications ?? true);
-    document.getElementById('settings-internship-notifications').checked = !!(data.internshipNotifications ?? true);
-    document.getElementById('settings-placement-notifications').checked = !!(data.placementNotifications ?? true);
-    document.getElementById('settings-profile-visibility').value = data.profileVisibility || 'public';
-    document.getElementById('settings-dark-mode').checked = !!(data.darkMode ?? false);
-    document.getElementById('settings-recruiter-discovery').checked = !!(data.recruiterDiscovery ?? true);
-    document.getElementById('settings-hide-email').checked = !!(data.hideEmail ?? false);
+    document.getElementById('settings-job-notifications').checked = !!(settings.jobNotifications ?? true);
+    document.getElementById('settings-internship-notifications').checked = !!(settings.internshipNotifications ?? true);
+    document.getElementById('settings-placement-notifications').checked = !!(settings.placementNotifications ?? true);
+    document.getElementById('settings-profile-visibility').value = settings.profileVisibility || 'public';
+    document.getElementById('settings-dark-mode').checked = !!(settings.darkMode ?? false);
+    document.getElementById('settings-recruiter-discovery').checked = !!(settings.recruiterDiscovery ?? true);
+    document.getElementById('settings-cross-recommend').checked = !!(settings.crossRecommendEnabled ?? true);
+    document.getElementById('settings-excluded-companies').value = Array.isArray(settings.excludedCompanyIds) ? settings.excludedCompanyIds.join(', ') : '';
+    document.getElementById('settings-hide-email').checked = !!(settings.hideEmail ?? false);
   } catch (e) {
     console.error('Settings load failed', e);
   }
@@ -1224,6 +1227,9 @@ async function handleSaveSettings(event) {
     internshipNotifications: document.getElementById('settings-internship-notifications').checked,
     placementNotifications: document.getElementById('settings-placement-notifications').checked,
     recruiterDiscovery: document.getElementById('settings-recruiter-discovery').checked,
+    crossRecommendEnabled: document.getElementById('settings-cross-recommend').checked,
+    excludedCompanyIds: (document.getElementById('settings-excluded-companies').value || '')
+      .split(',').map(id => id.trim()).filter(Boolean),
     profileVisibility: document.getElementById('settings-profile-visibility').value,
     darkMode: document.getElementById('settings-dark-mode').checked,
     hideEmail: document.getElementById('settings-hide-email').checked,
@@ -1468,12 +1474,15 @@ async function handlePostJobSubmit(e) {
   const salary_stipend = document.getElementById('job-post-salary').value.trim();
   const min_cgpa = document.getElementById('job-post-cgpa').value;
   const required_skills = document.getElementById('job-post-skills').value.trim();
+  const min_ai_score = Number(document.getElementById('job-post-ai-score').value || 70);
+  const department = document.getElementById('job-post-department').value.trim();
+  const max_backlogs = document.getElementById('job-post-backlogs').value;
   const deadline = document.getElementById('job-post-deadline').value;
 
   try {
     await apiFetch('/company/jobs', {
       method: 'POST',
-      body: JSON.stringify({ title, location, salary_stipend, min_cgpa, required_skills, deadline })
+      body: JSON.stringify({ title, location, salary_stipend, min_cgpa, required_skills, min_ai_score, department, max_backlogs, deadline })
     });
     alert('Job Requirement Published to Candidates!');
     navigateTo('company-dashboard');

@@ -13,6 +13,23 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { URL } = require('url');
 const { generateAICareerAdvice } = require('./ai_engine');
+const { 
+  getAIContextByRole, 
+  generateGreeting, 
+  getSuggestedQuestions, 
+  getAssistantTitle,
+  getSystemPrompt,
+  canAccessData,
+  getTerminology
+} = require('./ai-contexts');
+const { getNavigationByRole, getGroupedNavigationByRole } = require('./role-navigation');
+const { 
+  calculateStudentJobMatch, 
+  findMatchingStudentsForJob, 
+  isStudentEligibleForJob,
+  findEligibleJobsForStudent,
+  generateNotificationListForJob
+} = require('./talent-finder');
 
 // Environment Setup
 const envPath = path.join(__dirname, '..', '.env');
@@ -1217,6 +1234,118 @@ const server = http.createServer(async (req, res) => {
       }).sort((a, b) => b.matchPercentage - a.matchPercentage);
       return sendJSON(200, { companies: [...new Set(skillMap.map(item => item.companyName))], jobs: skillMap });
     }
+
+    // Talent Finder - Get matched jobs for current student
+    if (pathname === '/api/talent-finder/matched-jobs' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      
+      const userId = authUser.id;
+      const profile = state.studentProfiles[userId] || {};
+      const studentSkills = state.userSkills[userId] || [];
+      
+      // Convert skills to format expected by matcher
+      const skillsForMatcher = studentSkills.map(s => ({
+        name: s.skill_name,
+        level_pct: Number(s.level_pct || 0)
+      }));
+
+      const matchedJobs = findEligibleJobsForStudent(profile, state.jobs, skillsForMatcher);
+      
+      return sendJSON(200, {
+        totalMatches: matchedJobs.length,
+        matches: matchedJobs.map(m => ({
+          jobId: m.jobId,
+          title: m.title,
+          company: m.company,
+          matchPercentage: m.match.matchPercentage,
+          recommendationLevel: m.match.recommendationLevel,
+          strengths: m.match.strengths,
+          skillGaps: m.match.skillGaps
+        }))
+      });
+    }
+
+    // Talent Finder - Get matched students for a company's job
+    if (pathname.match(/^\/api\/talent-finder\/job\/\d+\/candidates$/) && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      
+      const jobId = Number(pathname.split('/')[4]);
+      const job = state.jobs.find(j => j.id === jobId && j.companyId === authUser.companyId);
+      if (!job) return sendJSON(404, { error: 'Job not found.' });
+
+      // Get all students
+      const students = state.users
+        .filter(u => u.role === 'student')
+        .map(u => ({
+          id: u.id,
+          student_id: u.student_id,
+          ...state.studentProfiles[u.id]
+        }))
+        .filter(s => s.id); // Only include those with profiles
+
+      // Convert job requirements to matcher format
+      const jobForMatcher = {
+        required_skills: job.required_skills || [],
+        min_cgpa: job.min_cgpa,
+        department: job.department,
+        graduation_year: job.graduation_year
+      };
+
+      // Find matching students
+      const matchingStudents = findMatchingStudentsForJob(jobForMatcher, students, state.userSkills);
+
+      // Filter by privacy settings
+      const filteredMatches = matchingStudents
+        .map(m => {
+          const privacySettings = state.settings[m.studentId] || {};
+          if (privacySettings.profileVisibility === 'private' || privacySettings.recruiterDiscovery === false) {
+            return null;
+          }
+          return {
+            studentId: m.studentId,
+            name: m.name,
+            department: m.department,
+            cgpa: privacySettings.showAcademicInfo !== false ? m.cgpa : null,
+            matchPercentage: m.match.matchPercentage,
+            recommendationLevel: m.match.recommendationLevel,
+            strengths: m.match.strengths,
+            skillGaps: m.match.skillGaps,
+            matched: m.match.matched
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.matchPercentage - a.matchPercentage);
+
+      return sendJSON(200, {
+        job,
+        totalCandidates: filteredMatches.length,
+        candidates: filteredMatches.slice(0, 50) // Limit to top 50
+      });
+    }
+
+    // Talent Finder - Check if student is eligible for a specific job
+    if (pathname.match(/^\/api\/talent-finder\/job\/\d+\/eligible$/) && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+
+      const jobId = Number(pathname.split('/')[4]);
+      const job = state.jobs.find(j => j.id === jobId);
+      if (!job) return sendJSON(404, { error: 'Job not found.' });
+
+      const profile = state.studentProfiles[authUser.id] || {};
+      const studentSkills = state.userSkills[authUser.id] || [];
+
+      const eligible = isStudentEligibleForJob(profile, job, studentSkills);
+
+      return sendJSON(200, { 
+        eligible,
+        jobId,
+        message: eligible ? 'You are eligible for this job!' : 'You do not meet all the requirements for this job.'
+      });
+    }
+
     if (pathname.match(/^\/api\/student\/jobs\/\d+$/) && req.method === 'GET') {
       const authUser = requireStudent();
       if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
@@ -1304,7 +1433,197 @@ const server = http.createServer(async (req, res) => {
       const profile = state.studentProfiles[authUser.id] || {};
       if (Number(profile.cgpa || 0) < Number(drive.minimumCGPA || 0)) return sendJSON(403, { error: 'You are not eligible for this drive.' });
       drive.registrations = Array.from(new Set([...(drive.registrations || []), authUser.id]));
+      if (!state.applications) state.applications = [];
+      const existingApp = state.applications.find(a => a.studentId === authUser.id && a.driveId === drive.id);
+      if (!existingApp) {
+        state.applications.push({
+          id: Date.now(),
+          studentId: authUser.id,
+          company: drive.company,
+          role: drive.role,
+          driveId: drive.id,
+          appliedDate: new Date().toISOString(),
+          status: 'Applied',
+          matchScore: 75 + Math.random() * 25
+        });
+      }
+      persistState();
       return sendJSON(200, { success: true, registered: true });
+    }
+
+    // APPLICATIONS MANAGEMENT
+    if (pathname === '/api/student/applications' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const applications = (state.applications || []).filter(app => app.studentId === authUser.id).map(app => ({
+        id: app.id,
+        company: app.company,
+        role: app.role,
+        appliedDate: app.appliedDate,
+        status: app.status,
+        matchScore: app.matchScore,
+        statusBadgeColor: app.status === 'Selected' ? '#10b981' : app.status === 'Rejected' ? '#ef4444' : app.status === 'Shortlisted' ? '#3b82f6' : app.status === 'Interview' ? '#f59e0b' : '#6b7280'
+      }));
+      return sendJSON(200, applications);
+    }
+
+    // CAMPUS DRIVE CREATION & MANAGEMENT (COMPANY)
+    if (pathname === '/api/company/campus-drives' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      const body = await parseJSON(req);
+      if (!state.campusDrives) state.campusDrives = [];
+      const company = state.companies.find(c => c.companyId === authUser.companyId);
+      const newDrive = {
+        id: Math.max(...state.campusDrives.map(d => d.id || 0), 0) + 1,
+        company: company?.name || authUser.companyName,
+        companyId: authUser.companyId,
+        title: body.title || `Campus Drive - ${new Date().getFullYear()}`,
+        role: body.role || 'Software Developer',
+        date: body.date,
+        deadline: body.deadline,
+        location: body.location || 'To be announced',
+        salary: body.salary || 'Confidential',
+        minimumCGPA: Number(body.minimumCGPA) || 6.5,
+        department: body.department || 'All Departments',
+        degree: body.degree || 'B.E./B.Tech',
+        requiredSkills: body.requiredSkills || [],
+        registrations: [],
+        createdAt: new Date().toISOString()
+      };
+      state.campusDrives.push(newDrive);
+      persistState();
+      return sendJSON(201, { success: true, drive: newDrive });
+    }
+
+    if (pathname === '/api/company/campus-drives' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      const drives = (state.campusDrives || []).filter(d => d.companyId === authUser.companyId).map(d => ({
+        ...d,
+        registrationCount: (d.registrations || []).length,
+        applicantCount: (state.applications || []).filter(a => a.driveId === d.id).length
+      }));
+      return sendJSON(200, drives);
+    }
+
+    if (pathname.match(/^\/api\/company\/campus-drives\/\d+\/registrations$/) && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      const driveId = Number(pathname.split('/')[4]);
+      const drive = (state.campusDrives || []).find(d => d.id === driveId);
+      if (!drive || drive.companyId !== authUser.companyId) return sendJSON(404, { error: 'Drive not found.' });
+      const registrations = (drive.registrations || []).map(studentId => {
+        const student = state.users.find(u => u.id === studentId);
+        const profile = state.studentProfiles[studentId] || {};
+        const app = (state.applications || []).find(a => a.studentId === studentId && a.driveId === driveId);
+        return {
+          studentId: student?.student_id,
+          name: profile.name || 'Student',
+          email: student?.email,
+          department: profile.department,
+          cgpa: profile.cgpa,
+          status: app?.status || 'Applied',
+          matchScore: app?.matchScore || 0
+        };
+      });
+      return sendJSON(200, { drive, registrations });
+    }
+
+    if (pathname.match(/^\/api\/company\/campus-drives\/\d+\/application\/\d+\/status$/) && req.method === 'PUT') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      const pathParts = pathname.split('/');
+      const driveId = Number(pathParts[4]);
+      const studentId = Number(pathParts[6]);
+      const body = await parseJSON(req);
+      const drive = (state.campusDrives || []).find(d => d.id === driveId);
+      if (!drive || drive.companyId !== authUser.companyId) return sendJSON(404, { error: 'Drive not found.' });
+      const app = (state.applications || []).find(a => a.studentId === studentId && a.driveId === driveId);
+      if (!app) return sendJSON(404, { error: 'Application not found.' });
+      app.status = body.status || app.status;
+      persistState();
+      return sendJSON(200, { success: true, application: app });
+    }
+
+    // PLACEMENT TRACKING
+    if (pathname === '/api/student/placement' && req.method === 'GET') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const placement = state.placements[authUser.id] || null;
+      return sendJSON(200, placement || { message: 'No placement record found' });
+    }
+
+    if (pathname === '/api/student/placement' && req.method === 'POST') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      if (!state.placements) state.placements = {};
+      const placement = {
+        studentId: authUser.id,
+        company: body.company || '',
+        role: body.role || '',
+        package: body.package || '',
+        placementDate: body.placementDate || new Date().toISOString(),
+        joiningDate: body.joiningDate || '',
+        location: body.location || '',
+        placementType: body.placementType || 'Full-time',
+        skillsUsed: body.skillsUsed || [],
+        status: 'Placed'
+      };
+      state.placements[authUser.id] = placement;
+      persistState();
+      return sendJSON(201, { success: true, placement });
+    }
+
+    if (pathname === '/api/student/placement' && req.method === 'PUT') {
+      const authUser = requireStudent();
+      if (!authUser) return sendJSON(401, { error: 'Student authentication required.' });
+      const body = await parseJSON(req);
+      if (!state.placements) state.placements = {};
+      state.placements[authUser.id] = { ...state.placements[authUser.id], ...body };
+      persistState();
+      return sendJSON(200, { success: true, placement: state.placements[authUser.id] });
+    }
+
+    // PLACEMENT ANALYTICS (COMPANY)
+    if (pathname === '/api/company/placements' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required.' });
+      const placements = Object.values(state.placements || {}).filter(p => p.company === (state.companies.find(c => c.companyId === authUser.companyId)?.name || authUser.companyName));
+      return sendJSON(200, placements);
+    }
+
+    // PLACEMENT ANALYTICS (COLLEGE ADMIN)
+    if (pathname === '/api/college/placements' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'college') return sendJSON(401, { error: 'College Admin authentication required.' });
+      const collegeStudents = Object.entries(state.studentProfiles).filter(([_, profile]) => profile.college === authUser.collegeName).map(([id, _]) => Number(id));
+      const placements = collegeStudents.map(studentId => state.placements[studentId]).filter(Boolean);
+      const placementStats = {
+        totalStudents: collegeStudents.length,
+        placedStudents: placements.length,
+        placementRate: ((placements.length / collegeStudents.length) * 100).toFixed(2),
+        placements
+      };
+      return sendJSON(200, placementStats);
+    }
+
+    // PLACEMENT ANALYTICS (UNIVERSITY ADMIN)
+    if (pathname === '/api/university/placements' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'university_admin') return sendJSON(401, { error: 'University Admin authentication required.' });
+      const placements = Object.values(state.placements || {});
+      const placementStats = {
+        totalPlacements: placements.length,
+        averagePackage: placements.length > 0 ? (placements.reduce((sum, p) => sum + (Number(p.package.split('-')[0]) || 0), 0) / placements.length).toFixed(2) : 0,
+        placementsByCompany: placements.reduce((acc, p) => {
+          acc[p.company] = (acc[p.company] || 0) + 1;
+          return acc;
+        }, {}),
+        placements
+      };
+      return sendJSON(200, placementStats);
     }
 
     if (pathname === '/api/ai/chat' && req.method === 'POST') {
@@ -1312,15 +1631,117 @@ const server = http.createServer(async (req, res) => {
         const body = await parseJSON(req);
         const message = String(body.message || '').trim();
         if (!message) return sendJSON(400, { error: 'Please enter a question for the AI advisor.' });
+        
         const authUser = getAuthUser();
-        const profile = authUser ? (state.studentProfiles[authUser.id] || {}) : {};
-        const reply = await generateAICareerAdvice(message, { name: profile.name || authUser?.username || 'Student' });
-        return sendJSON(200, { reply });
+        const userRole = authUser?.role || 'student';
+        const aiContext = getAIContextByRole(userRole);
+        
+        // Get user-specific info based on role
+        let userIdentifier = 'User';
+        if (userRole === 'student') {
+          const profile = state.studentProfiles[authUser?.id] || {};
+          userIdentifier = profile.name || authUser?.username || 'Student';
+        } else if (userRole === 'company') {
+          const company = state.companies.find(c => c.companyId === authUser?.companyId);
+          userIdentifier = company?.name || authUser?.companyName || 'Company';
+        } else if (userRole === 'college_admin') {
+          userIdentifier = authUser?.collegeName || 'College Admin';
+        } else if (userRole === 'university_admin') {
+          userIdentifier = authUser?.universityName || 'University Admin';
+        } else if (userRole === 'super_admin') {
+          userIdentifier = authUser?.username || 'Admin';
+        }
+        
+        // Verify access to data type if needed
+        const dataRestricted = !canAccessData(userRole, message);
+        if (dataRestricted) {
+          return sendJSON(403, { error: 'You do not have access to this information.' });
+        }
+        
+        // Generate role-aware AI response
+        const reply = await generateAICareerAdvice(message, { 
+          name: userIdentifier,
+          role: userRole,
+          systemPrompt: aiContext.systemPrompt
+        });
+        
+        return sendJSON(200, { 
+          reply,
+          role: userRole,
+          assistantTitle: aiContext.assistantTitle
+        });
       } catch (error) {
         console.error('[AI] Chat route failed:', error.message);
         return sendJSON(503, { error: 'AI service is currently unavailable. Please check the AI API configuration and try again.' });
       }
     }
+
+    // Get role-specific AI context and greeting
+    if (pathname === '/api/ai/context' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      const userRole = authUser?.role || 'student';
+      
+      let userIdentifier = 'User';
+      if (userRole === 'student') {
+        const profile = state.studentProfiles[authUser?.id] || {};
+        userIdentifier = profile.name || authUser?.username || 'Student';
+      } else if (userRole === 'company') {
+        const company = state.companies.find(c => c.companyId === authUser?.companyId);
+        userIdentifier = company?.name || authUser?.companyName || 'Company';
+      } else if (userRole === 'college_admin') {
+        userIdentifier = authUser?.collegeName || 'College';
+      } else if (userRole === 'university_admin') {
+        userIdentifier = authUser?.universityName || 'University';
+      }
+      
+      const aiContext = getAIContextByRole(userRole);
+      const greeting = generateGreeting(userRole, userIdentifier);
+      
+      return sendJSON(200, {
+        role: userRole,
+        greeting,
+        assistantTitle: aiContext.assistantTitle,
+        availableData: aiContext.availableData,
+        restrictedData: aiContext.restrictedData
+      });
+    }
+
+    // Get role-specific suggested questions
+    if (pathname === '/api/ai/suggestions' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      const userRole = authUser?.role || 'student';
+      const suggestions = getSuggestedQuestions(userRole);
+      
+      return sendJSON(200, {
+        role: userRole,
+        suggestions
+      });
+    }
+
+    // Get assistant title and metadata
+    if (pathname === '/api/ai/metadata' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      const userRole = authUser?.role || 'student';
+      const aiContext = getAIContextByRole(userRole);
+      const terminology = getTerminology(userRole);
+      
+      return sendJSON(200, {
+        role: userRole,
+        assistantTitle: aiContext.assistantTitle,
+        terminology,
+        suggestedQuestions: aiContext.suggestedQuestions
+      });
+    }
+
+    // Get role-specific navigation
+    if (pathname === '/api/navigation' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      const userRole = authUser?.role || 'student';
+      const navigation = getGroupedNavigationByRole(userRole);
+      
+      return sendJSON(200, navigation);
+    }
+
     if (pathname === '/api/ai/skill-analysis' && req.method === 'GET') {
       const authUser = getAuthUser();
       const studentId = authUser ? authUser.id : 1;
@@ -1458,9 +1879,249 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(200, { success: true, application: app });
     }
 
-    // ----------------------------------------------------
+    // ============================================================================
+    // ENHANCED COMPANY RECRUITER MODULE APIs
+    // ============================================================================
+
+    // COMPANY PROFILE MANAGEMENT
+    if (pathname === '/api/company/profile' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const company = state.companies.find(c => c.companyId === authUser.companyId);
+      if (!company) return sendJSON(404, { error: 'Company not found' });
+      const stats = {
+        activeJobs: state.jobs.filter(j => j.companyId === authUser.companyId && j.status !== 'Closed').length,
+        totalApplications: state.applications.filter(a => a.companyId === authUser.companyId).length,
+        shortlisted: state.applications.filter(a => a.companyId === authUser.companyId && ['Shortlisted', 'Technical Interview', 'HR Interview', 'Final Review'].includes(a.status)).length,
+        selected: state.applications.filter(a => a.companyId === authUser.companyId && a.status === 'Selected').length
+      };
+      return sendJSON(200, { company, stats, recruiters: state.teamMembers?.filter(t => t.companyId === authUser.companyId) || [] });
+    }
+
+    if (pathname === '/api/company/profile' && req.method === 'PUT') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const company = state.companies.find(c => c.companyId === authUser.companyId);
+      if (!company) return sendJSON(404, { error: 'Company not found' });
+      const body = await parseJSON(req);
+      Object.assign(company, { name: body.name || company.name, industry: body.industry || company.industry, description: body.description || company.description, website: body.website || company.website, logo: body.logo || company.logo, about: body.about || company.about, mission: body.mission || company.mission, vision: body.vision || company.vision, culture: body.culture || company.culture, benefits: body.benefits || company.benefits });
+      return sendJSON(200, { success: true, company });
+    }
+
+    // COMPREHENSIVE JOB MANAGEMENT
+    if (pathname === '/api/company/jobs' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const jobs = state.jobs.filter(j => j.companyId === authUser.companyId).map(j => ({ ...j, applications: state.applications.filter(a => a.job_id === j.id).length }));
+      return sendJSON(200, jobs);
+    }
+
+    if (pathname.match(/^\/api\/company\/jobs\/\d+$/) && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const jobId = Number(pathname.split('/')[4]);
+      const job = state.jobs.find(j => j.id === jobId && j.companyId === authUser.companyId);
+      if (!job) return sendJSON(404, { error: 'Job not found' });
+      return sendJSON(200, job);
+    }
+
+    if (pathname.match(/^\/api\/company\/jobs\/\d+$/) && req.method === 'PUT') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const jobId = Number(pathname.split('/')[4]);
+      const job = state.jobs.find(j => j.id === jobId && j.companyId === authUser.companyId);
+      if (!job) return sendJSON(404, { error: 'Job not found' });
+      const body = await parseJSON(req);
+      Object.assign(job, body, { updatedAt: new Date().toISOString() });
+      return sendJSON(200, { success: true, job });
+    }
+
+    if (pathname.match(/^\/api\/company\/jobs\/\d+$/) && req.method === 'DELETE') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const jobId = Number(pathname.split('/')[4]);
+      state.jobs = state.jobs.filter(j => !(j.id === jobId && j.companyId === authUser.companyId));
+      state.applications = state.applications.filter(a => a.job_id !== jobId);
+      return sendJSON(200, { success: true });
+    }
+
+    // ATS PIPELINE & APPLICATION MANAGEMENT
+    if (pathname === '/api/company/applications' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+      const status = parsedUrl.searchParams.get('status');
+      const jobId = parsedUrl.searchParams.get('jobId');
+      let applications = state.applications.filter(a => a.companyId === authUser.companyId);
+      if (status) applications = applications.filter(a => a.status === status);
+      if (jobId) applications = applications.filter(a => a.job_id === Number(jobId));
+      return sendJSON(200, applications);
+    }
+
+    if (pathname === '/api/company/applications/kanban' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const applications = state.applications.filter(a => a.companyId === authUser.companyId);
+      const stages = ['Applied', 'Screening', 'Shortlisted', 'Assessment', 'Technical Interview', 'HR Interview', 'Final Review', 'Selected'];
+      const kanban = {};
+      stages.forEach(stage => { kanban[stage] = applications.filter(a => a.status === stage || a.ats_stage === stage); });
+      return sendJSON(200, kanban);
+    }
+
+    if (pathname.match(/^\/api\/company\/applications\/\d+\/stage$/) && req.method === 'PUT') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const appId = Number(pathname.split('/')[4]);
+      const application = state.applications.find(a => a.id === appId && a.companyId === authUser.companyId);
+      if (!application) return sendJSON(404, { error: 'Application not found' });
+      const body = await parseJSON(req);
+      const newStage = body.stage || body.status;
+      const previousStage = application.status;
+      application.status = newStage;
+      application.ats_stage = newStage;
+      application.last_updated = new Date().toISOString().split('T')[0];
+      if (!application.stageHistory) application.stageHistory = [];
+      application.stageHistory.push({ from: previousStage, to: newStage, timestamp: new Date().toISOString(), movedBy: authUser.email });
+      return sendJSON(200, { success: true, application });
+    }
+
+    // ASSESSMENT SYSTEM
+    if (pathname === '/api/company/assessments' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyAssessments) state.companyAssessments = {};
+      return sendJSON(200, state.companyAssessments[authUser.companyId] || []);
+    }
+
+    if (pathname === '/api/company/assessments' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyAssessments) state.companyAssessments = {};
+      const body = await parseJSON(req);
+      const newAssessment = { id: Date.now(), companyId: authUser.companyId, title: body.title || 'Assessment', description: body.description || '', type: body.type || 'Technical', duration: Number(body.duration) || 60, totalMarks: Number(body.totalMarks) || 100, passingScore: Number(body.passingScore) || 60, questions: body.questions || [], createdAt: new Date().toISOString() };
+      if (!state.companyAssessments[authUser.companyId]) state.companyAssessments[authUser.companyId] = [];
+      state.companyAssessments[authUser.companyId].push(newAssessment);
+      return sendJSON(201, { success: true, assessment: newAssessment });
+    }
+
+    // INTERVIEW MANAGEMENT
+    if (pathname === '/api/company/interviews' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyInterviews) state.companyInterviews = {};
+      return sendJSON(200, state.companyInterviews[authUser.companyId] || []);
+    }
+
+    if (pathname === '/api/company/interviews/schedule' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyInterviews) state.companyInterviews = {};
+      const body = await parseJSON(req);
+      const newInterview = { id: Date.now(), companyId: authUser.companyId, applicationId: body.applicationId, candidateName: body.candidateName || '', candidateEmail: body.candidateEmail || '', jobTitle: body.jobTitle || '', round: body.round || 'Technical', date: body.date, time: body.time, duration: Number(body.duration) || 60, interviewType: body.interviewType || 'Video', interviewer: body.interviewer || authUser.email, meetingLink: body.meetingLink || '', status: 'Scheduled', createdAt: new Date().toISOString() };
+      if (!state.companyInterviews[authUser.companyId]) state.companyInterviews[authUser.companyId] = [];
+      state.companyInterviews[authUser.companyId].push(newInterview);
+      return sendJSON(201, { success: true, interview: newInterview });
+    }
+
+    // TALENT SEARCH & DISCOVERY
+    if (pathname === '/api/company/candidates/search' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+      const skill = parsedUrl.searchParams.get('skill');
+      const minCGPA = parsedUrl.searchParams.get('minCGPA');
+      const department = parsedUrl.searchParams.get('department');
+      const company = state.companies.find(c => c.companyId === authUser.companyId);
+      let candidates = state.users.filter(u => u.role === 'student').map(u => {
+        const profile = state.studentProfiles[u.id] || {};
+        const settings = getStudentSettings(u.id);
+        if (settings.profileVisibility === 'private' || settings.recruiterDiscovery === false) return null;
+        const match = calculateCompanyMatch(u.id, company);
+        const skills = state.userSkills[u.id] || [];
+        const aiScore = calculateSkillScore(u.id);
+        return { studentId: u.student_id, name: profile.name || 'Student', email: settings.showContactInfo ? u.email : '***@***.com', department: profile.department || '', cgpa: settings.showAcademicInfo ? profile.cgpa : null, skills: settings.showSkills ? skills.map(s => ({ name: s.skill_name, level: s.level_pct })) : [], aiScore, matchPercentage: match.matchPercentage, recommendationLevel: match.recommendationLevel, userId: u.id };
+      }).filter(Boolean);
+      if (skill) candidates = candidates.filter(c => c.skills.some(s => s.name.toLowerCase().includes(skill.toLowerCase())));
+      if (minCGPA) candidates = candidates.filter(c => c.cgpa && c.cgpa >= Number(minCGPA));
+      if (department) candidates = candidates.filter(c => c.department.toLowerCase().includes(department.toLowerCase()));
+      candidates.sort((a, b) => b.matchPercentage - a.matchPercentage);
+      return sendJSON(200, candidates);
+    }
+
+    if (pathname.match(/^\/api\/company\/candidates\/[^/]+$/) && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const studentId = pathname.split('/')[4];
+      const student = state.users.find(u => u.student_id === studentId && u.role === 'student');
+      if (!student) return sendJSON(404, { error: 'Candidate not found' });
+      const settings = getStudentSettings(student.id);
+      if (settings.profileVisibility === 'private' || settings.recruiterDiscovery === false) return sendJSON(403, { error: 'Profile restricted' });
+      const profile = state.studentProfiles[student.id] || {};
+      const company = state.companies.find(c => c.companyId === authUser.companyId);
+      const match = calculateCompanyMatch(student.id, company);
+      return sendJSON(200, { studentId: student.student_id, name: profile.name, email: settings.showContactInfo ? student.email : null, profile: { department: profile.department, cgpa: settings.showAcademicInfo ? profile.cgpa : null, graduationYear: profile.year, college: profile.college }, skills: settings.showSkills ? state.userSkills[student.id] || [] : [], projects: state.projects[student.id] || [], certificates: state.certificates[student.id] || [], internships: state.internships[student.id] || [], resume: state.resumes[student.id] || null, aiScore: calculateSkillScore(student.id), match });
+    }
+
+    // OFFER MANAGEMENT
+    if (pathname === '/api/company/offers' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyOffers) state.companyOffers = {};
+      return sendJSON(200, state.companyOffers[authUser.companyId] || []);
+    }
+
+    if (pathname === '/api/company/offers' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.companyOffers) state.companyOffers = {};
+      const body = await parseJSON(req);
+      const newOffer = { id: Date.now(), companyId: authUser.companyId, applicationId: body.applicationId, candidateName: body.candidateName, candidateEmail: body.candidateEmail, jobTitle: body.jobTitle, jobId: body.jobId, salary: body.salary, benefits: body.benefits || [], joiningDate: body.joiningDate, location: body.location, offerExpiryDate: body.offerExpiryDate, status: 'Sent', letterContent: body.letterContent || '', createdAt: new Date().toISOString() };
+      if (!state.companyOffers[authUser.companyId]) state.companyOffers[authUser.companyId] = [];
+      state.companyOffers[authUser.companyId].push(newOffer);
+      return sendJSON(201, { success: true, offer: newOffer });
+    }
+
+    // TEAM MEMBER MANAGEMENT
+    if (pathname === '/api/company/team' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.teamMembers) state.teamMembers = [];
+      return sendJSON(200, state.teamMembers.filter(t => t.companyId === authUser.companyId));
+    }
+
+    if (pathname === '/api/company/team' && req.method === 'POST') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      if (!state.teamMembers) state.teamMembers = [];
+      const body = await parseJSON(req);
+      const newMember = { id: Date.now(), companyId: authUser.companyId, name: body.name, email: body.email, role: body.role || 'HR_RECRUITER', department: body.department || 'HR', createdAt: new Date().toISOString() };
+      state.teamMembers.push(newMember);
+      return sendJSON(201, { success: true, member: newMember });
+    }
+
+    // ANALYTICS & REPORTING
+    if (pathname === '/api/company/analytics/dashboard' && req.method === 'GET') {
+      const authUser = getAuthUser();
+      if (!authUser || authUser.role !== 'company') return sendJSON(401, { error: 'Company authentication required' });
+      const applications = state.applications.filter(a => a.companyId === authUser.companyId);
+      const jobs = state.jobs.filter(j => j.companyId === authUser.companyId);
+      const pipeline = {
+        applied: applications.filter(a => a.status === 'Applied').length,
+        screening: applications.filter(a => a.status === 'Screening').length,
+        shortlisted: applications.filter(a => a.status === 'Shortlisted').length,
+        assessment: applications.filter(a => a.status === 'Assessment').length,
+        technicalInterview: applications.filter(a => a.status === 'Technical Interview').length,
+        hrInterview: applications.filter(a => a.status === 'HR Interview').length,
+        finalReview: applications.filter(a => a.status === 'Final Review').length,
+        selected: applications.filter(a => a.status === 'Selected').length
+      };
+      const metrics = { totalApplications: applications.length, totalJobs: jobs.length, activeJobs: jobs.filter(j => j.status === 'Published').length, applicationToInterviewRatio: (applications.filter(a => a.status.includes('Interview')).length / (applications.length || 1)).toFixed(2), interviewToSelectionRatio: (pipeline.selected / (applications.filter(a => a.status.includes('Interview')).length || 1)).toFixed(2) };
+      return sendJSON(200, { pipeline, metrics, jobs });
+    }
+
+    // ============================================================================
     // UNIVERSITY ADMIN MODULE APIs
-    // ----------------------------------------------------
+    // ============================================================================
     if (pathname === '/api/college/dashboard' && req.method === 'GET') {
       const authUser = getAuthUser();
       if (!authUser || authUser.role !== 'college') return sendJSON(401, { error: 'Access Denied. College Admin Auth Required.' });

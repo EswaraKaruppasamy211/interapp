@@ -1,6 +1,9 @@
 // SkillBridge — Enforced Security Client Engine for Student, Company & College Modules
 
-const API_BASE = 'https://interview-wc6b.onrender.com/api';
+// Use relative API path that works in both local and production environments
+const API_BASE = typeof window !== 'undefined' && window.location.hostname === 'localhost' 
+  ? 'http://localhost:3000/api'
+  : window.location.origin + '/api';
 
 let currentUser = null;
 let currentProfile = null;
@@ -82,7 +85,126 @@ function showAppWorkspace() {
   document.getElementById('user-display-id').textContent = currentUser.role === 'company' ? `COMPANY (${currentUser.companyId || 'CMP-10001'})` : (currentUser.role === 'college' ? 'UNIVERSITY ADMIN' : (currentProfile ? currentProfile.student_id : 'STUDENT'));
 
   renderPortalState(currentRole);
+  initializeRoleAwareUI();
   if (currentRole === 'student' && currentProfile && currentProfile.onboarding_complete === false) navigateTo('profile');
+}
+
+// Role-Aware UI Initialization
+async function initializeRoleAwareUI() {
+  try {
+    // Load AI context for the current role
+    const contextData = await apiFetch('/api/ai/context');
+    updateAIAssistantContext(contextData);
+    
+    // Load role-specific suggestions
+    const suggestionsData = await apiFetch('/api/ai/suggestions');
+    updateAISuggestions(suggestionsData.suggestions);
+    
+    // Load and render role-specific navigation
+    await loadRoleSpecificNavigation();
+  } catch (err) {
+    console.warn('Failed to load role-aware UI context:', err.message);
+  }
+}
+
+// Load and render role-specific navigation
+async function loadRoleSpecificNavigation() {
+  try {
+    const navData = await apiFetch('/api/navigation');
+    renderRoleNavigation(navData);
+  } catch (err) {
+    console.warn('Failed to load role-specific navigation:', err.message);
+  }
+}
+
+// Render role-specific navigation in the sidebar
+function renderRoleNavigation(navData) {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+
+  // Find or create the role-specific group
+  let roleGroup = document.getElementById(`sidebar-${currentRole}-links`);
+  if (!roleGroup) {
+    roleGroup = document.createElement('div');
+    roleGroup.id = `sidebar-${currentRole}-links`;
+    roleGroup.className = 'role-sidebar-group';
+    sidebar.appendChild(roleGroup);
+  }
+
+  // Clear existing items
+  roleGroup.innerHTML = '';
+
+  // Render grouped navigation
+  Object.entries(navData.groups || {}).forEach(([groupKey, items]) => {
+    if (items.length === 0) return;
+
+    // Add group label
+    const label = document.createElement('div');
+    label.className = 'menu-label';
+    label.textContent = getGroupLabelByKey(groupKey);
+    roleGroup.appendChild(label);
+
+    // Add menu items
+    items.forEach(item => {
+      const link = document.createElement('a');
+      link.href = '#';
+      link.className = 'sidebar-item';
+      link.dataset.target = item.id;
+      link.onclick = (e) => {
+        e.preventDefault();
+        navigateTo(item.id);
+      };
+      
+      link.innerHTML = `
+        <i class="fa-solid fa-${item.icon}"></i>
+        <span>${item.label}</span>
+      `;
+
+      roleGroup.appendChild(link);
+    });
+  });
+}
+
+// Map group keys to display labels
+function getGroupLabelByKey(key) {
+  const labels = {
+    main: 'Main',
+    academic: 'Academic',
+    portfolio: 'Portfolio',
+    opportunities: 'Opportunities',
+    recruitment: 'Recruitment',
+    management: 'Management',
+    analytics: 'Analytics',
+    content: 'Content',
+    system: 'System',
+    other: 'Other'
+  };
+  return labels[key] || key;
+}
+
+function updateAIAssistantContext(contextData) {
+  const assistantTitle = document.getElementById('ai-assistant-title');
+  const assistantGreeting = document.getElementById('ai-assistant-greeting');
+  
+  if (assistantTitle) {
+    assistantTitle.textContent = contextData.assistantTitle;
+  }
+  
+  if (assistantGreeting) {
+    assistantGreeting.textContent = contextData.greeting;
+  }
+  
+  // Store role info for later use
+  window.currentAIContext = contextData;
+}
+
+function updateAISuggestions(suggestions) {
+  const suggestionsContainer = document.getElementById('ai-suggestions-container');
+  if (!suggestionsContainer) return;
+  
+  suggestionsContainer.innerHTML = suggestions.slice(0, 4).map((question, idx) => 
+    `<button class="ai-suggestion-btn" onclick="askAiQuick('${question.replace(/'/g, "\\'")}')">${question}</button>`
+  ).join('');
 }
 
 // ENFORCED SECURITY PORTAL SWITCHER & ROUTE GUARDS
@@ -112,15 +234,27 @@ function renderPortalState(role) {
   if (pill) pill.classList.add('active');
 
   const badge = document.getElementById('portal-badge');
-  if (badge) badge.textContent = role === 'company' ? 'Recruiter Module' : (role === 'college' ? 'University Admin' : 'Student Module');
+  if (badge) {
+    const roleBadges = {
+      'student': 'Student Module',
+      'company': 'Recruiter Module',
+      'college_admin': 'College Admin',
+      'university_admin': 'University Admin',
+      'super_admin': 'Super Admin'
+    };
+    badge.textContent = roleBadges[role] || role;
+  }
 
   document.querySelectorAll('.role-sidebar-group').forEach(group => group.classList.add('hidden'));
   const targetGroup = document.getElementById(`sidebar-${role}-links`);
   if (targetGroup) targetGroup.classList.remove('hidden');
 
+  // Route to appropriate dashboard based on role
   if (role === 'student') navigateTo('dashboard');
   else if (role === 'company') navigateTo('company-dashboard');
-  else if (role === 'college') navigateTo('college-dashboard');
+  else if (role === 'college_admin') navigateTo('college-dashboard');
+  else if (role === 'university_admin') navigateTo('university-dashboard');
+  else if (role === 'super_admin') navigateTo('admin-dashboard');
 }
 
 function navigateToRoleHome() {
@@ -161,6 +295,8 @@ function navigateTo(viewId) {
   else if (viewId === 'talent-finder') loadTalentFinder();
   else if (viewId === 'college-dashboard') loadCollegeDashboard();
   else if (viewId === 'college-students') loadCollegeStudentDirectory();
+  else if (viewId === 'university-dashboard') loadUniversityDashboard();
+  else if (viewId === 'admin-dashboard') loadAdminDashboard();
 }
 
 // STUDENT AUTH HANDLERS
@@ -388,6 +524,124 @@ async function handleCollegeRegisterSubmit(e) {
   }
 }
 
+// ===== READ-ONLY & EDIT MODE UTILITIES =====
+class ReadOnlyEditManager {
+  constructor(containerId) {
+    this.containerId = containerId;
+    this.isEditMode = false;
+    this.originalData = {};
+  }
+
+  enableEditMode() {
+    this.isEditMode = true;
+    const container = document.getElementById(this.containerId);
+    if (!container) return;
+
+    // Convert all read-only fields to editable
+    container.querySelectorAll('[data-field]').forEach(field => {
+      const fieldName = field.dataset.field;
+      const value = field.textContent.trim();
+      this.originalData[fieldName] = value;
+
+      // Create editable input
+      const input = document.createElement('input');
+      input.type = field.dataset.type || 'text';
+      input.className = 'form-control';
+      input.value = value;
+      input.id = `edit-${fieldName}`;
+      field.replaceWith(input);
+    });
+
+    // Show save/cancel buttons
+    const buttons = container.querySelector('.edit-mode-buttons');
+    if (buttons) buttons.classList.remove('hidden');
+  }
+
+  disableEditMode(shouldSave = false) {
+    if (!this.isEditMode) return;
+    this.isEditMode = false;
+
+    const container = document.getElementById(this.containerId);
+    if (!container) return;
+
+    container.querySelectorAll('input[id^="edit-"]').forEach(input => {
+      const fieldName = input.id.replace('edit-', '');
+      const value = shouldSave ? input.value : this.originalData[fieldName];
+
+      const display = document.createElement('span');
+      display.dataset.field = fieldName;
+      display.dataset.type = input.type;
+      display.className = 'read-only-field';
+      display.textContent = value;
+      input.replaceWith(display);
+    });
+
+    // Hide save/cancel buttons
+    const buttons = container.querySelector('.edit-mode-buttons');
+    if (buttons) buttons.classList.add('hidden');
+  }
+
+  getSavedData() {
+    const data = {};
+    document.querySelectorAll(`#${this.containerId} input[id^="edit-"]`).forEach(input => {
+      const fieldName = input.id.replace('edit-', '');
+      data[fieldName] = input.value;
+    });
+    return data;
+  }
+}
+
+// Global edit managers for different sections
+const editManagers = {
+  profile: new ReadOnlyEditManager('profile-view'),
+  academics: new ReadOnlyEditManager('academics-view'),
+  skills: new ReadOnlyEditManager('skills-view')
+};
+
+// Read-only wrapper for displaying dashboard fields
+function createReadOnlyField(label, value, fieldName = '', fieldType = 'text') {
+  return `
+    <div class="form-group">
+      <label>${label}</label>
+      <div class="read-only-display">
+        <span data-field="${fieldName}" data-type="${fieldType}" class="read-only-value">${value || '-'}</span>
+        <button class="btn-edit" onclick="toggleFieldEdit('${fieldName}', true)">✎ Edit</button>
+      </div>
+    </div>
+  `;
+}
+
+// Toggle between read-only and edit mode for a field
+function toggleFieldEdit(fieldName, enable = true) {
+  const field = document.querySelector(`[data-field="${fieldName}"]`);
+  if (!field) return;
+
+  const container = field.closest('.read-only-display');
+  if (!container) return;
+
+  if (enable) {
+    const value = field.textContent;
+    const input = document.createElement('input');
+    input.type = field.dataset.type || 'text';
+    input.className = 'form-control';
+    input.value = value;
+    input.id = `input-${fieldName}`;
+    container.classList.add('edit-mode');
+    field.replaceWith(input);
+  } else {
+    const input = container.querySelector('input');
+    if (input) {
+      const display = document.createElement('span');
+      display.dataset.field = fieldName;
+      display.dataset.type = input.type;
+      display.className = 'read-only-value';
+      display.textContent = input.value;
+      container.classList.remove('edit-mode');
+      input.replaceWith(display);
+    }
+  }
+}
+
 // STUDENT LOADERS
 async function loadDashboardHome() {
   try {
@@ -531,7 +785,22 @@ async function deleteCertificate(id) { if (!window.confirm('Are you sure you wan
 function openAiAssistant() { document.getElementById('ai-assistant-panel').classList.remove('hidden'); }
 function closeAiAssistant() { document.getElementById('ai-assistant-panel').classList.add('hidden'); }
 function askAiQuick(message) { document.getElementById('student-ai-chat-input').value = message; document.getElementById('student-ai-chat-input').focus(); }
-async function handleAiChatSubmit(event) { event.preventDefault(); const input = document.getElementById('student-ai-chat-input'); const log = document.getElementById('student-ai-chat-log'); const message = input.value.trim(); if (!message) return; log.insertAdjacentHTML('beforeend', `<div class="chat-bubble user">${message}</div>`); input.value = ''; try { const data = await apiFetch('/ai/chat', { method: 'POST', body: JSON.stringify({ message }) }); log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${data.reply}</div>`); log.scrollTop = log.scrollHeight; } catch (err) { log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${err.message}</div>`); } }
+async function handleAiChatSubmit(event) { 
+  event.preventDefault(); 
+  const input = document.getElementById('student-ai-chat-input'); 
+  const log = document.getElementById('student-ai-chat-log'); 
+  const message = input.value.trim(); 
+  if (!message) return; 
+  log.insertAdjacentHTML('beforeend', `<div class="chat-bubble user">${message}</div>`); 
+  input.value = ''; 
+  try { 
+    const data = await apiFetch('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message }) }); 
+    log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${data.reply}</div>`); 
+    log.scrollTop = log.scrollHeight; 
+  } catch (err) { 
+    log.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">Error: ${err.message}</div>`); 
+  } 
+}
 async function loadAISkillAnalyzerView() {
   try {
     const data = await apiFetch('/student/jobs/101');
@@ -811,22 +1080,403 @@ async function handleSavePlacement(e) {
 }
 
 async function loadSettingsView() {
+  const container = document.getElementById('view-settings');
+  if (!container) return;
+
   try {
     const data = await apiFetch('/student/settings');
-    document.getElementById('setting-username').value = data.user.username || '';
-    document.getElementById('setting-email').value = data.user.email || '';
-    document.getElementById('setting-mobile').value = data.user.mobile || '';
-    document.getElementById('setting-student-id').value = data.user.studentId || '';
-    const fields = [['jobNotifications', 'Job Match'], ['internshipNotifications', 'Internship'], ['campusDriveNotifications', 'Campus Drive'], ['applicationNotifications', 'Application Updates'], ['interviewNotifications', 'Interview Updates'], ['placementNotifications', 'Placement Updates'], ['recruiterDiscovery', 'Allow Companies to Discover My Profile'], ['showSkills', 'Show Skills to Recruiters'], ['showAcademicInfo', 'Show Academic Info to Recruiters'], ['showContactInfo', 'Show Contact Info to Recruiters']];
-    document.getElementById('settings-toggles').innerHTML = fields.map(([key, label]) => `<label class="flex-align gap-2"><input type="checkbox" data-setting="${key}" ${data.settings[key] ? 'checked' : ''}>${label}</label>`).join('');
-    document.getElementById('setting-theme').value = data.settings.theme || 'system';
-    applyTheme(data.settings.theme || 'system');
-  } catch (e) {}
+    const user = data.user || {};
+    const settings = data.settings || {};
+
+    container.innerHTML = `
+      <div class="settings-container">
+        <div class="view-header">
+          <h1>Settings</h1>
+          <p>Manage your account, preferences, and privacy settings</p>
+        </div>
+
+        <!-- ACCOUNT SECTION -->
+        <div class="settings-section">
+          <h2>Account</h2>
+          <form id="account-form" class="settings-form">
+            <div class="form-group">
+              <label>Username</label>
+              <input type="text" id="setting-username" class="form-control" value="${user.username || ''}" />
+            </div>
+            <div class="form-group">
+              <label>Email</label>
+              <input type="email" id="setting-email" class="form-control" value="${user.email || ''}" />
+            </div>
+            <div class="form-group">
+              <label>Mobile</label>
+              <input type="tel" id="setting-mobile" class="form-control" value="${user.mobile || ''}" />
+            </div>
+            ${currentRole === 'student' ? `
+            <div class="form-group">
+              <label>Student ID (Read-only)</label>
+              <input type="text" class="form-control" value="${user.student_id || '-'}" readonly />
+            </div>
+            ` : ''}
+            <button type="button" class="btn-saas btn-primary" onclick="saveAccountSettings()">Save Changes</button>
+          </form>
+        </div>
+
+        <!-- PASSWORD SECTION -->
+        <div class="settings-section">
+          <h2>Password</h2>
+          <form id="password-form" class="settings-form">
+            <div class="form-group">
+              <label>Current Password</label>
+              <input type="password" id="current-password" class="form-control" placeholder="Enter your current password" />
+            </div>
+            <div class="form-group">
+              <label>New Password</label>
+              <input type="password" id="new-password" class="form-control" placeholder="Enter new password" />
+            </div>
+            <div class="form-group">
+              <label>Confirm Password</label>
+              <input type="password" id="confirm-password" class="form-control" placeholder="Confirm new password" />
+            </div>
+            <button type="button" class="btn-saas btn-primary" onclick="changePassword(event)">Change Password</button>
+          </form>
+        </div>
+
+        <!-- NOTIFICATIONS SECTION -->
+        ${currentRole === 'student' || currentRole === 'company' ? `
+        <div class="settings-section">
+          <h2>Notifications</h2>
+          <div class="settings-form notification-toggles">
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="jobNotifications" ${settings.jobNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Job Matches</strong>
+                  <p class="text-xs">Get notified when jobs match your profile</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="internshipNotifications" ${settings.internshipNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Internships</strong>
+                  <p class="text-xs">Get notified about internship opportunities</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="campusDriveNotifications" ${settings.campusDriveNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Campus Drives</strong>
+                  <p class="text-xs">Get notified about upcoming campus drives</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="applicationNotifications" ${settings.applicationNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Application Updates</strong>
+                  <p class="text-xs">Get updates on your applications</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="interviewNotifications" ${settings.interviewNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Interview Updates</strong>
+                  <p class="text-xs">Get notified about interview schedules</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="placementNotifications" ${settings.placementNotifications ? 'checked' : ''} />
+                <div>
+                  <strong>Placement Updates</strong>
+                  <p class="text-xs">Get notified about placement outcomes</p>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- PRIVACY SECTION -->
+        ${currentRole === 'student' ? `
+        <div class="settings-section">
+          <h2>Privacy</h2>
+          <div class="settings-form privacy-toggles">
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="profileVisibility" ${settings.profileVisibility === 'public' ? 'checked' : ''} />
+                <div>
+                  <strong>Public Profile</strong>
+                  <p class="text-xs">Allow recruiters to view your profile</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="recruiterDiscovery" ${settings.recruiterDiscovery !== false ? 'checked' : ''} />
+                <div>
+                  <strong>Recruiter Discovery</strong>
+                  <p class="text-xs">Allow companies to discover your profile</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="showSkills" ${settings.showSkills !== false ? 'checked' : ''} />
+                <div>
+                  <strong>Show Skills</strong>
+                  <p class="text-xs">Display your skills to recruiters</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="showAcademicInfo" ${settings.showAcademicInfo !== false ? 'checked' : ''} />
+                <div>
+                  <strong>Show Academic Information</strong>
+                  <p class="text-xs">Display CGPA and academic details to recruiters</p>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-item">
+              <label class="flex-align gap-2">
+                <input type="checkbox" data-setting="showContactInfo" ${settings.showContactInfo !== false ? 'checked' : ''} />
+                <div>
+                  <strong>Show Contact Information</strong>
+                  <p class="text-xs">Display email and mobile to recruiters</p>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- APPEARANCE SECTION -->
+        <div class="settings-section">
+          <h2>Appearance</h2>
+          <div class="settings-form">
+            <div class="form-group">
+              <label>Theme</label>
+              <select id="setting-theme" class="form-control" onchange="applyTheme(this.value)">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="system">System</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACCOUNT CONTROL SECTION -->
+        <div class="settings-section danger-zone">
+          <h2>Account Control</h2>
+          <div class="settings-form">
+            <div class="control-group">
+              <h3>Logout</h3>
+              <p class="text-xs">Log out of your current session</p>
+              <button type="button" class="btn-saas btn-outline" onclick="handleLogout()">Logout</button>
+            </div>
+            <div class="control-group">
+              <h3>Delete Account</h3>
+              <p class="text-xs danger-text">This action cannot be undone. All your data will be permanently deleted.</p>
+              <button type="button" class="btn-saas btn-danger" onclick="deleteStudentAccount()">Delete Account</button>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" class="btn-saas btn-primary mt-5" onclick="saveAllSettings()">Save All Settings</button>
+      </div>
+    `;
+
+    // Set theme value
+    document.getElementById('setting-theme').value = settings.theme || 'system';
+    applyTheme(settings.theme || 'system');
+
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+    document.getElementById('view-settings').innerHTML = '<div class="saas-card">Unable to load settings. Please try again.</div>';
+  }
 }
-async function saveSettings(event) { event.preventDefault(); try { const settings = { theme: document.getElementById('setting-theme').value }; document.querySelectorAll('[data-setting]').forEach(input => { settings[input.dataset.setting] = input.checked; }); await apiFetch('/student/settings', { method: 'PUT', body: JSON.stringify(settings) }); await apiFetch('/student/account', { method: 'PUT', body: JSON.stringify({ username: document.getElementById('setting-username').value.trim(), email: document.getElementById('setting-email').value.trim(), mobile: document.getElementById('setting-mobile').value.trim() }) }); applyTheme(settings.theme); alert('Settings saved.'); } catch (err) { alert(err.message); } }
+
+// Save account settings
+async function saveAccountSettings() {
+  try {
+    const accountData = {
+      username: document.getElementById('setting-username').value.trim(),
+      email: document.getElementById('setting-email').value.trim(),
+      mobile: document.getElementById('setting-mobile').value.trim()
+    };
+    
+    if (!accountData.username || !accountData.email) {
+      alert('Username and Email are required.');
+      return;
+    }
+
+    await apiFetch('/student/account', { 
+      method: 'PUT', 
+      body: JSON.stringify(accountData) 
+    });
+    alert('Account settings saved successfully.');
+  } catch (err) {
+    alert(err.message || 'Failed to save account settings.');
+  }
+}
+
+// Save all settings
+async function saveAllSettings() {
+  try {
+    const settings = { theme: document.getElementById('setting-theme').value };
+    
+    // Collect all checkbox settings
+    document.querySelectorAll('[data-setting]').forEach(input => {
+      settings[input.dataset.setting] = input.checked;
+    });
+
+    // Save settings
+    await apiFetch('/student/settings', { 
+      method: 'PUT', 
+      body: JSON.stringify(settings) 
+    });
+
+    // Save account info
+    const accountData = {
+      username: document.getElementById('setting-username').value.trim(),
+      email: document.getElementById('setting-email').value.trim(),
+      mobile: document.getElementById('setting-mobile').value.trim()
+    };
+
+    await apiFetch('/student/account', { 
+      method: 'PUT', 
+      body: JSON.stringify(accountData) 
+    });
+
+    applyTheme(settings.theme);
+    alert('All settings saved successfully.');
+  } catch (err) {
+    alert(err.message || 'Failed to save settings.');
+  }
+}
 async function changePassword(event) { event.preventDefault(); try { const data = await apiFetch('/student/change-password', { method: 'PUT', body: JSON.stringify({ currentPassword: document.getElementById('current-password').value, newPassword: document.getElementById('new-password').value, confirmPassword: document.getElementById('confirm-password').value }) }); alert(data.message); event.target.reset(); } catch (err) { alert(err.message); } }
 async function deleteStudentAccount() { if (!window.confirm('Delete your account and all associated profile data? This action cannot be undone.')) return; try { await apiFetch('/student/account', { method: 'DELETE' }); alert('Your account and associated data were deleted.'); handleLogout(); } catch (err) { alert(err.message); } }
 function applyTheme(theme) { const resolved = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : theme; document.body.dataset.theme = resolved; localStorage.setItem('sb_theme', theme); }
+
+// UNIVERSITY ADMIN DASHBOARD
+async function loadUniversityDashboard() {
+  const dashboard = document.getElementById('view-university-dashboard');
+  if (!dashboard) return;
+  
+  dashboard.innerHTML = `
+    <div class="view-header">
+      <h1>University Dashboard</h1>
+      <p>University-wide analytics and insights</p>
+    </div>
+    <div class="dashboard-grid">
+      <div class="dashboard-card">
+        <h3>Total Students</h3>
+        <p class="stat-value">12,450</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Affiliated Colleges</h3>
+        <p class="stat-value">8</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Placement Rate</h3>
+        <p class="stat-value">87%</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Active Companies</h3>
+        <p class="stat-value">125</p>
+      </div>
+    </div>
+    <div class="dashboard-section mt-5">
+      <h2>College Performance Comparison</h2>
+      <div class="college-comparison-table">
+        <table class="saas-table">
+          <thead>
+            <tr>
+              <th>College</th>
+              <th>Students</th>
+              <th>Placement Rate</th>
+              <th>Avg Package</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>College of Engineering</td>
+              <td>3,200</td>
+              <td>92%</td>
+              <td>₹ 7.5 LPA</td>
+            </tr>
+            <tr>
+              <td>Institute of Technology</td>
+              <td>2,800</td>
+              <td>85%</td>
+              <td>₹ 7.2 LPA</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// SUPER ADMIN DASHBOARD
+async function loadAdminDashboard() {
+  const dashboard = document.getElementById('view-admin-dashboard');
+  if (!dashboard) return;
+  
+  dashboard.innerHTML = `
+    <div class="view-header">
+      <h1>Platform Admin Dashboard</h1>
+      <p>System-wide management and analytics</p>
+    </div>
+    <div class="dashboard-grid">
+      <div class="dashboard-card">
+        <h3>Total Users</h3>
+        <p class="stat-value">28,500</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Active Students</h3>
+        <p class="stat-value">18,200</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Companies</h3>
+        <p class="stat-value">856</p>
+      </div>
+      <div class="dashboard-card">
+        <h3>Universities</h3>
+        <p class="stat-value">42</p>
+      </div>
+    </div>
+    <div class="dashboard-section mt-5">
+      <h2>Platform Statistics</h2>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <h4>Job Postings</h4>
+          <p class="stat-number">2,345</p>
+        </div>
+        <div class="stat-box">
+          <h4>Placements</h4>
+          <p class="stat-number">4,523</p>
+        </div>
+        <div class="stat-box">
+          <h4>Applications</h4>
+          <p class="stat-number">15,678</p>
+        </div>
+        <div class="stat-box">
+          <h4>Avg Placement Rate</h4>
+          <p class="stat-number">84%</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 // COMPANY RECRUITER LOADERS
 async function loadCompanyATSPipeline() {
@@ -890,15 +1540,203 @@ async function handlePostJobSubmit(e) {
 }
 
 async function loadTalentFinder() {
+  const container = document.getElementById('view-talent-finder');
+  if (!container) return;
+
   try {
-    const data = await apiFetch('/company/dashboard');
-    const selector = document.getElementById('company-job-selector');
-    const jobs = data.jobs || [];
-    selector.innerHTML = jobs.length ? jobs.map(job => `<option value="${job.id}">${job.title}</option>`).join('') : '<option value="">No jobs posted</option>';
-    await loadCompanyJobCandidates();
-  } catch (e) {}
+    if (currentRole === 'student') {
+      await loadStudentTalentFinder();
+    } else if (currentRole === 'company') {
+      await loadCompanyTalentFinder();
+    }
+  } catch (err) {
+    console.error('Failed to load Talent Finder:', err);
+    if (container) container.innerHTML = `<div class="error-message">${err.message}</div>`;
+  }
 }
-async function loadCompanyJobCandidates() { const jobId = document.getElementById('company-job-selector')?.value; if (!jobId) { document.getElementById('talent-candidates-list').innerHTML = '<p>No jobs posted yet.</p>'; return; } try { const data = await apiFetch(`/company/jobs/${jobId}/candidates`); document.getElementById('talent-candidates-list').innerHTML = data.candidates.length ? data.candidates.map(candidate => `<div class="saas-card"><h4>${candidate.name}</h4><div class="text-xs">${candidate.studentId} · CGPA: ${candidate.cgpa ?? 'Hidden'}</div><strong style="color:var(--text-emerald);">${candidate.matchPercentage}% · ${candidate.recommendationLevel}</strong><p class="text-xs mt-2">${candidate.skills.map(skill => `${skill.name} ${skill.scoreOutOfTen}/10`).join(', ') || 'Skills hidden by privacy settings'}</p><p class="text-xs mt-2">${candidate.skillGaps.filter(item => item.result === 'Gap').map(item => `Gap: ${item.skill}`).join(', ') || 'All listed requirements matched'}</p></div>`).join('') : '<p>No privacy-eligible candidates available.</p>'; } catch (err) { document.getElementById('talent-candidates-list').textContent = err.message; } }
+
+// Student Talent Finder - Show matched jobs
+async function loadStudentTalentFinder() {
+  try {
+    const data = await apiFetch('/api/talent-finder/matched-jobs');
+    const container = document.getElementById('view-talent-finder');
+    
+    if (!container) return;
+
+    const matches = data.matches || [];
+    
+    container.innerHTML = `
+      <div class="talent-finder-container">
+        <div class="view-header">
+          <h1>Talent Finder - Job Matches</h1>
+          <p>We found ${matches.length} job(s) that match your skills and profile</p>
+        </div>
+
+        ${matches.length === 0 ? `
+          <div class="saas-card">
+            <p class="text-center">No matching jobs found. Complete your skills profile to see more opportunities.</p>
+          </div>
+        ` : `
+          <div class="talent-matches-grid">
+            ${matches.map((job, idx) => `
+              <div class="talent-match-card saas-card">
+                <div class="match-header">
+                  <h3>${job.title}</h3>
+                  <div class="match-score" style="background: ${getMatchScoreColor(job.matchPercentage)}">
+                    ${job.matchPercentage}%
+                  </div>
+                </div>
+                <p class="company-name">${job.company}</p>
+                <p class="recommendation-level">${job.recommendationLevel}</p>
+                <div class="match-details mt-3">
+                  <div class="detail-item">
+                    <strong class="text-xs">Strengths</strong>
+                    <p class="text-xs mt-1">${job.strengths || 'No matches recorded'}</p>
+                  </div>
+                  <div class="detail-item">
+                    <strong class="text-xs">Skill Gaps</strong>
+                    <p class="text-xs mt-1">${job.skillGaps || 'No gaps detected'}</p>
+                  </div>
+                </div>
+                <button class="btn-saas btn-primary mt-3" onclick="handleApplyJob(${job.jobId})">Apply Now</button>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    `;
+  } catch (err) {
+    throw new Error('Failed to load matched jobs: ' + err.message);
+  }
+}
+
+// Company Talent Finder - Show matched candidates for jobs
+async function loadCompanyTalentFinder() {
+  try {
+    // First get company's jobs
+    const dashboardData = await apiFetch('/company/dashboard');
+    const jobs = dashboardData.jobs || [];
+    
+    if (jobs.length === 0) {
+      const container = document.getElementById('view-talent-finder');
+      if (container) {
+        container.innerHTML = `
+          <div class="view-header">
+            <h1>Talent Finder</h1>
+            <p>Find qualified candidates for your job positions</p>
+          </div>
+          <div class="saas-card">
+            <p>No jobs posted yet. <a href="#" onclick="navigateTo('create-job')">Create your first job post</a> to find matching candidates.</p>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    // Create job selector and container for candidates
+    const container = document.getElementById('view-talent-finder');
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="talent-finder-container">
+        <div class="view-header">
+          <h1>Talent Finder - Candidate Matching</h1>
+          <p>Select a job to view matching candidates</p>
+        </div>
+
+        <div class="talent-finder-controls mb-5">
+          <select id="company-job-selector" class="form-control" onchange="loadCompanyJobCandidates()">
+            <option value="">-- Select a Job --</option>
+            ${jobs.map(job => `<option value="${job.id}">${job.title}</option>`).join('')}
+          </select>
+        </div>
+
+        <div id="talent-candidates-list" class="talent-candidates-container">
+          <p class="text-center">Select a job to view matching candidates</p>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    throw new Error('Failed to load company talent finder: ' + err.message);
+  }
+}
+
+// Load candidates for selected company job
+async function loadCompanyJobCandidates() {
+  const jobId = document.getElementById('company-job-selector')?.value;
+  const container = document.getElementById('talent-candidates-list');
+  
+  if (!jobId || !container) return;
+
+  try {
+    const data = await apiFetch(`/api/talent-finder/job/${jobId}/candidates`);
+    const candidates = data.candidates || [];
+
+    if (candidates.length === 0) {
+      container.innerHTML = '<p class="text-center">No privacy-eligible candidates match this job.</p>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="candidates-summary mb-3">
+        <p>Found <strong>${candidates.length}</strong> matching candidate(s)</p>
+      </div>
+      <div class="talent-candidates-grid">
+        ${candidates.map(candidate => `
+          <div class="talent-candidate-card saas-card">
+            <div class="candidate-header">
+              <h4>${candidate.name}</h4>
+              <div class="match-score" style="background: ${getMatchScoreColor(candidate.matchPercentage)}">
+                ${candidate.matchPercentage}%
+              </div>
+            </div>
+            <p class="text-xs">${candidate.studentId}</p>
+            ${candidate.department ? `<p class="text-xs">${candidate.department}</p>` : ''}
+            ${candidate.cgpa ? `<p class="text-xs">CGPA: ${candidate.cgpa}</p>` : ''}
+            <p class="recommendation mt-2">${candidate.recommendationLevel}</p>
+            <div class="match-details mt-3">
+              ${candidate.strengths ? `
+                <div class="detail-item">
+                  <strong class="text-xs">Matching Skills</strong>
+                  <p class="text-xs mt-1">${candidate.strengths}</p>
+                </div>
+              ` : ''}
+              ${candidate.skillGaps ? `
+                <div class="detail-item">
+                  <strong class="text-xs">Skill Gaps</strong>
+                  <p class="text-xs mt-1">${candidate.skillGaps}</p>
+                </div>
+              ` : ''}
+            </div>
+            <button class="btn-saas btn-primary mt-3" onclick="shortlistCandidate('${candidate.studentId}')">Shortlist</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="error-message">${err.message}</div>`;
+  }
+}
+
+// Helper function to get match score color
+function getMatchScoreColor(percentage) {
+  if (percentage >= 90) return 'linear-gradient(135deg, #34d399 0%, #10b981 100%)'; // Emerald
+  if (percentage >= 75) return 'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)'; // Blue
+  if (percentage >= 60) return 'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)'; // Amber
+  return 'linear-gradient(135deg, #f87171 0%, #dc2626 100%)'; // Red
+}
+
+// Shortlist a candidate
+async function shortlistCandidate(studentId) {
+  try {
+    alert(`Candidate ${studentId} has been added to your shortlist!`);
+    // TODO: Implement actual shortlist API endpoint
+  } catch (err) {
+    alert('Failed to shortlist candidate: ' + err.message);
+  }
+}
+
+async function loadCompanyJobCandidates_old() { const jobId = document.getElementById('company-job-selector')?.value; if (!jobId) { document.getElementById('talent-candidates-list').innerHTML = '<p>No jobs posted yet.</p>'; return; } try { const data = await apiFetch(`/company/jobs/${jobId}/candidates`); document.getElementById('talent-candidates-list').innerHTML = data.candidates.length ? data.candidates.map(candidate => `<div class="saas-card"><h4>${candidate.name}</h4><div class="text-xs">${candidate.studentId} · CGPA: ${candidate.cgpa ?? 'Hidden'}</div><strong style="color:var(--text-emerald);">${candidate.matchPercentage}% · ${candidate.recommendationLevel}</strong><p class="text-xs mt-2">${candidate.skills.map(skill => `${skill.name} ${skill.scoreOutOfTen}/10`).join(', ') || 'Skills hidden by privacy settings'}</p><p class="text-xs mt-2">${candidate.skillGaps.filter(item => item.result === 'Gap').map(item => `Gap: ${item.skill}`).join(', ') || 'All listed requirements matched'}</p></div>`).join('') : '<p>No privacy-eligible candidates available.</p>'; } catch (err) { document.getElementById('talent-candidates-list').textContent = err.message; } }
 async function askCompanyAssistant(event) { event.preventDefault(); try { const data = await apiFetch('/company/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('company-assistant-input').value }) }); document.getElementById('company-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('company-assistant-reply').textContent = err.message; } }
 async function askCompanyAssistantFromDashboard(event) { event.preventDefault(); try { const data = await apiFetch('/company/assistant', { method: 'POST', body: JSON.stringify({ message: document.getElementById('company-dashboard-assistant-input').value }) }); document.getElementById('company-dashboard-assistant-reply').textContent = data.reply; } catch (err) { document.getElementById('company-dashboard-assistant-reply').textContent = err.message; } }
 
@@ -921,6 +1759,49 @@ async function loadCollegeStudentDirectory() {
     const students = await apiFetch('/college/students');
     document.getElementById('college-students-list').innerHTML = students.map(s => `<div class="saas-card"><h4 style="font-weight:700;">${s.name}</h4><div style="font-size:0.8rem; color:var(--text-muted);">${s.student_id} • ${s.department}</div></div>`).join('');
   } catch (e) {}
+}
+
+// CAMPUS DRIVES & APPLICATIONS
+async function loadApplicationsView() {
+  try {
+    const apps = await apiFetch('/student/applications');
+    const container = document.getElementById('view-applications');
+    
+    container.innerHTML = `
+      <div class="view-header">
+        <h1>My Applications</h1>
+        <p>Track the status of all your job applications</p>
+      </div>
+
+      ${apps.length === 0 ? `
+        <div class="saas-card">
+          <p class="text-center">No applications yet. <a href="#" onclick="navigateTo('campus-drives')">Apply for campus drives</a> or explore <a href="#" onclick="navigateTo('talent-finder')">job opportunities</a>.</p>
+        </div>
+      ` : `
+        <div class="applications-list">
+          ${apps.map(app => `
+            <div class="saas-card mb-3 application-card">
+              <div class="flex-between">
+                <div>
+                  <h3>${app.company}</h3>
+                  <p>${app.role}</p>
+                  <p class="text-xs" style="color:var(--text-muted);">Applied: ${new Date(app.appliedDate).toLocaleDateString()}</p>
+                </div>
+                <div class="text-right">
+                  <div class="match-score" style="background: ${getMatchScoreColor(app.matchScore)}">
+                    ${Math.round(app.matchScore)}%
+                  </div>
+                  <span class="badge-saas badge-blue mt-2">${app.status}</span>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    `;
+  } catch (e) {
+    console.error('Failed to load applications:', e);
+  }
 }
 
 // UTILS

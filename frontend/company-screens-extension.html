@@ -1,0 +1,399 @@
+<!-- ENHANCED COMPANY RECRUITER MODULE VIEWS - Add these sections to index.html after view-talent-finder -->
+
+<!-- COMPANY JOBS LIST & MANAGEMENT -->
+<section id="view-company-jobs-list" class="workspace-view hidden">
+  <div class="flex-between mb-6">
+    <div><h1 style="font-size: 1.6rem; font-weight: 800;">Job Postings</h1><p style="color: var(--text-muted);">Manage all active and closed job requisitions.</p></div>
+    <button class="btn-saas btn-primary" onclick="navigateTo('company-jobs')"><i class="fa-solid fa-plus"></i> Post New Job</button>
+  </div>
+  
+  <div class="saas-card">
+    <table class="saas-table">
+      <thead>
+        <tr>
+          <th>Job Title</th>
+          <th>Location</th>
+          <th>Applications</th>
+          <th>Status</th>
+          <th>Deadline</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="company-jobs-table-body">
+        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading jobs...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- CANDIDATE COMPARISON (5-WAY) -->
+<section id="view-candidate-comparison" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Candidate Comparison Tool</h1>
+  <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Compare up to 5 candidates side-by-side across skills, assessments, and interview performance.</p>
+  
+  <div class="saas-card mb-4">
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem;">
+      <div>
+        <label class="block text-xs font-bold mb-1">Candidate 1</label>
+        <input type="text" id="comp-cand-1" class="saas-input" placeholder="Enter student ID" />
+      </div>
+      <div>
+        <label class="block text-xs font-bold mb-1">Candidate 2</label>
+        <input type="text" id="comp-cand-2" class="saas-input" placeholder="Enter student ID" />
+      </div>
+      <div>
+        <label class="block text-xs font-bold mb-1">Candidate 3</label>
+        <input type="text" id="comp-cand-3" class="saas-input" placeholder="Enter student ID" />
+      </div>
+      <div>
+        <label class="block text-xs font-bold mb-1">Candidate 4</label>
+        <input type="text" id="comp-cand-4" class="saas-input" placeholder="Enter student ID" />
+      </div>
+      <div>
+        <label class="block text-xs font-bold mb-1">Candidate 5</label>
+        <input type="text" id="comp-cand-5" class="saas-input" placeholder="Enter student ID" />
+      </div>
+    </div>
+    <button class="btn-saas btn-primary" style="width: 100%; margin-top: 1rem;" onclick="compareCandidates()">Compare Candidates</button>
+  </div>
+  
+  <div id="comparison-results-container" class="saas-card hidden">
+    <table class="saas-table" id="comparison-table">
+      <thead>
+        <tr id="comparison-headers"></tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="6">Comparison results will appear here</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ASSESSMENT BUILDER & MANAGEMENT -->
+<section id="view-assessment-builder" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Assessment Builder</h1>
+  
+  <div class="grid-2 gap-4 mb-4">
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Create New Assessment</h3>
+      <form id="assessment-form" onsubmit="handleCreateAssessment(event)">
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Assessment Title</label>
+          <input type="text" id="assess-title" class="saas-input" placeholder="e.g. Java Backend Skills Test" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Assessment Type</label>
+          <select id="assess-type" class="saas-input" required>
+            <option value="Technical">Technical</option>
+            <option value="MCQ">Multiple Choice</option>
+            <option value="Coding">Coding Challenge</option>
+            <option value="Aptitude">Aptitude Test</option>
+            <option value="HR">HR / Behavioral</option>
+          </select>
+        </div>
+        <div class="grid-2 gap-3 mb-3">
+          <div>
+            <label class="block text-xs font-bold mb-1">Duration (Minutes)</label>
+            <input type="number" id="assess-duration" class="saas-input" value="60" min="15" max="180" required />
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1">Total Marks</label>
+            <input type="number" id="assess-marks" class="saas-input" value="100" min="10" max="1000" required />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Passing Score %</label>
+          <input type="number" id="assess-passing" class="saas-input" value="60" min="20" max="100" required />
+        </div>
+        <button type="submit" class="btn-saas btn-primary" style="width: 100%;">Create Assessment</button>
+      </form>
+    </div>
+    
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Active Assessments</h3>
+      <div id="active-assessments-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Loading assessments...</p>
+      </div>
+    </div>
+  </div>
+  
+  <div class="saas-card">
+    <h3 style="font-weight: 700; margin-bottom: 1rem;">Assessment Results</h3>
+    <table class="saas-table">
+      <thead>
+        <tr>
+          <th>Candidate</th>
+          <th>Assessment</th>
+          <th>Score</th>
+          <th>Percentage</th>
+          <th>Status</th>
+          <th>Submitted</th>
+        </tr>
+      </thead>
+      <tbody id="assessment-results-body">
+        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No results yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- INTERVIEW SCHEDULER & MANAGEMENT -->
+<section id="view-interview-scheduler" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Interview Scheduler</h1>
+  
+  <div class="grid-2 gap-4 mb-4">
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Schedule Interview</h3>
+      <form id="interview-schedule-form" onsubmit="handleScheduleInterview(event)">
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Candidate (Student ID)</label>
+          <input type="text" id="int-candidate" class="saas-input" placeholder="STU-2026-101" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Job Position</label>
+          <select id="int-job" class="saas-input" required>
+            <option value="">Select a job...</option>
+            <option value="101">Full-Stack Software Engineer</option>
+            <option value="102">Data Scientist</option>
+            <option value="103">DevOps Engineer</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Interview Round</label>
+          <select id="int-round" class="saas-input" required>
+            <option value="Technical">Technical</option>
+            <option value="HR">HR / Behavioral</option>
+            <option value="Final">Final / Director Round</option>
+          </select>
+        </div>
+        <div class="grid-2 gap-3 mb-3">
+          <div>
+            <label class="block text-xs font-bold mb-1">Date</label>
+            <input type="date" id="int-date" class="saas-input" required />
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1">Time</label>
+            <input type="time" id="int-time" class="saas-input" required />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Interview Type</label>
+          <select id="int-type" class="saas-input" required>
+            <option value="Video">Video Call (Google Meet / Zoom)</option>
+            <option value="Phone">Phone Call</option>
+            <option value="InPerson">In-Person</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Meeting Link (if Video)</label>
+          <input type="url" id="int-link" class="saas-input" placeholder="https://meet.google.com/..." />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Interviewer</label>
+          <input type="email" id="int-interviewer" class="saas-input" placeholder="recruiter@company.com" required />
+        </div>
+        <button type="submit" class="btn-saas btn-primary" style="width: 100%;">Schedule Interview</button>
+      </form>
+    </div>
+    
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Upcoming Interviews</h3>
+      <div id="upcoming-interviews-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <p style="color: var(--text-muted); font-size: 0.9rem;">No interviews scheduled</p>
+      </div>
+    </div>
+  </div>
+  
+  <div class="saas-card">
+    <h3 style="font-weight: 700; margin-bottom: 1rem;">Interview Calendar</h3>
+    <div style="background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 1rem; text-align: center; color: var(--text-muted);">
+      [Calendar widget would display here - List view shown above]
+    </div>
+  </div>
+</section>
+
+<!-- OFFER MANAGEMENT -->
+<section id="view-offer-management" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Offer Management</h1>
+  
+  <div class="grid-2 gap-4 mb-4">
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Generate Offer</h3>
+      <form id="offer-form" onsubmit="handleGenerateOffer(event)">
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Candidate (Student ID)</label>
+          <input type="text" id="offer-candidate" class="saas-input" placeholder="STU-2026-101" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Position</label>
+          <input type="text" id="offer-position" class="saas-input" placeholder="Senior Software Engineer" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Annual Salary</label>
+          <input type="text" id="offer-salary" class="saas-input" placeholder="₹ 12,00,000" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Joining Date</label>
+          <input type="date" id="offer-joining" class="saas-input" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Location</label>
+          <input type="text" id="offer-location" class="saas-input" placeholder="Bengaluru / Hybrid" required />
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Benefits</label>
+          <textarea id="offer-benefits" class="saas-input" rows="3" placeholder="Health Insurance, 401K, Remote Options"></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1">Offer Valid Until</label>
+          <input type="date" id="offer-expiry" class="saas-input" required />
+        </div>
+        <button type="submit" class="btn-saas btn-primary" style="width: 100%;">Generate & Send Offer</button>
+      </form>
+    </div>
+    
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Offer Status</h3>
+      <div id="offer-status-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <p style="color: var(--text-muted); font-size: 0.9rem;">No offers sent yet</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RECRUITMENT ANALYTICS & REPORTS -->
+<section id="view-recruitment-analytics" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Recruitment Analytics & Reports</h1>
+  
+  <div class="grid-2 gap-4 mb-4">
+    <div class="saas-card">
+      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">APPLICATIONS</div>
+      <div id="analytics-total-apps" style="font-size: 2rem; font-weight: 800; color: var(--text-blue);">0</div>
+    </div>
+    <div class="saas-card">
+      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">AI SHORTLISTED</div>
+      <div id="analytics-shortlisted" style="font-size: 2rem; font-weight: 800; color: var(--text-emerald);">0</div>
+    </div>
+    <div class="saas-card">
+      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">SELECTED</div>
+      <div id="analytics-selected" style="font-size: 2rem; font-weight: 800; color: var(--text-purple);">0</div>
+    </div>
+    <div class="saas-card">
+      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">TIME TO HIRE</div>
+      <div id="analytics-time-to-hire" style="font-size: 2rem; font-weight: 800;">N/A</div>
+    </div>
+  </div>
+  
+  <div class="grid-2 gap-4 mb-4">
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Hiring Funnel</h3>
+      <div id="funnel-chart" style="background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 1rem; text-align: center; color: var(--text-muted); min-height: 200px;">
+        [Funnel chart: Applied → Screening → Shortlisted → Assessment → Interview → Selected]
+      </div>
+    </div>
+    
+    <div class="saas-card">
+      <h3 style="font-weight: 700; margin-bottom: 1rem;">Job Performance</h3>
+      <table class="saas-table">
+        <thead>
+          <tr><th>Job Title</th><th>Applications</th><th>Avg Match</th></tr>
+        </thead>
+        <tbody id="job-perf-body">
+          <tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  <div class="saas-card">
+    <h3 style="font-weight: 700; margin-bottom: 1rem;">Skill Distribution Among Candidates</h3>
+    <div id="skill-dist-chart" style="background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 1rem; text-align: center; color: var(--text-muted); min-height: 200px;">
+      [Skill distribution chart]
+    </div>
+  </div>
+</section>
+
+<!-- CAMPUS RECRUITMENT DRIVES -->
+<section id="view-campus-recruitment" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Campus Recruitment Drives</h1>
+  
+  <div class="saas-card mb-4">
+    <button class="btn-saas btn-primary" onclick="openCampusDriveModal()"><i class="fa-solid fa-plus"></i> Create New Campus Drive</button>
+  </div>
+  
+  <div class="saas-card">
+    <table class="saas-table">
+      <thead>
+        <tr>
+          <th>University</th>
+          <th>Department</th>
+          <th>Position</th>
+          <th>Vacancies</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="campus-drives-table-body">
+        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No campus drives created yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- TEAM MEMBER MANAGEMENT -->
+<section id="view-team-management" class="workspace-view hidden">
+  <h1 style="font-size: 1.6rem; font-weight: 800;" class="mb-4">Team Member Management</h1>
+  
+  <div class="saas-card mb-4">
+    <button class="btn-saas btn-primary" onclick="openAddTeamMemberModal()"><i class="fa-solid fa-user-plus"></i> Add Team Member</button>
+  </div>
+  
+  <div class="saas-card">
+    <table class="saas-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Department</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="team-members-body">
+        <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading team members...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Add JavaScript at the end to handle these views -->
+<script>
+// Placeholder functions for company module features
+function compareCandidates() {
+  console.log('Comparing candidates...');
+  alert('Comparison feature coming soon');
+}
+
+function handleCreateAssessment(e) {
+  e.preventDefault();
+  alert('Assessment created (feature in development)');
+}
+
+function handleScheduleInterview(e) {
+  e.preventDefault();
+  alert('Interview scheduled (feature in development)');
+}
+
+function handleGenerateOffer(e) {
+  e.preventDefault();
+  alert('Offer generated (feature in development)');
+}
+
+function openCampusDriveModal() {
+  alert('Campus drive creation coming soon');
+}
+
+function openAddTeamMemberModal() {
+  alert('Add team member feature coming soon');
+}
+</script>

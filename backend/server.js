@@ -2392,6 +2392,10 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(200, { reply: `${students.length} authorized student record(s) are available for this university.` });
     }
 
+    if (pathname.startsWith('/api/')) {
+      return sendJSON(404, { error: `API route not found: ${pathname}` });
+    }
+
     // Static Asset Server Fallback (Supports root & frontend directory)
     let filePath = path.join(repoRoot, 'frontend', pathname === '/' ? 'index.html' : pathname);
     if (!fs.existsSync(filePath)) filePath = path.join(repoRoot, pathname === '/' ? 'index.html' : pathname);

@@ -76,18 +76,6 @@ function calculateStudentJobMatch(student, job, userSkills = []) {
       earnedPoints += 10;
       matchedSkills.push({ criteria: 'Graduation Year', year: studentGradYear, required: requiredGradYear, match: true });
     }
-
-    const maxBacklogs = Number(job.max_backlogs);
-    const currentBacklogs = Number(student.current_backlogs ?? student.backlogs ?? 0);
-    if (Number.isFinite(maxBacklogs) && maxBacklogs >= 0) {
-      totalPoints += 10;
-      if (currentBacklogs <= maxBacklogs) {
-        earnedPoints += 10;
-        matchedSkills.push({ criteria: 'Backlogs', student: currentBacklogs, required: maxBacklogs, match: true });
-      } else {
-        missedRequiredSkills.push({ criteria: 'Backlogs', gap: currentBacklogs - maxBacklogs });
-      }
-    }
   }
 
   // Calculate overall match percentage
@@ -148,8 +136,9 @@ function findMatchingStudentsForJob(job, allStudents = [], studentSkillsMap = {}
  */
 function isStudentEligibleForJob(student, job, userSkills = []) {
   const match = calculateStudentJobMatch(student, job, userSkills);
-  const minimumScore = Number(job.min_ai_score ?? job.minimum_ai_score ?? 60);
-  return match.matchPercentage >= minimumScore && match.gaps.length === 0;
+  
+  // Student is eligible if match percentage is >= 60%
+  return match.matchPercentage >= 60;
 }
 
 /**
@@ -161,8 +150,7 @@ function findEligibleJobsForStudent(student, allJobs = [], userSkills = []) {
   allJobs.forEach(job => {
     const match = calculateStudentJobMatch(student, job, userSkills);
     
-    const minimumScore = Number(job.min_ai_score ?? job.minimum_ai_score ?? 60);
-    if (match.matchPercentage >= minimumScore && match.gaps.length === 0) {
+    if (match.matchPercentage >= 60) {
       eligibleJobs.push({
         jobId: job.id,
         title: job.title,

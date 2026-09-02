@@ -1,7 +1,7 @@
 // SkillBridge — Enforced Security Client Engine for Student, Company & College Modules
 
 // Use relative API path that works in both local and production environments
-const API_BASE ='https://interview-wc6b.onrender.com/api';
+const API_BASE = 'https://interview-wc6b.onrender.com/api';
 
 let currentUser = null;
 let currentProfile = null;
@@ -43,8 +43,10 @@ async function apiFetch(endpoint, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   try {
-    const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-    const data = await res.json();
+    const normalizedEndpoint = endpoint.startsWith('/api/') ? endpoint.slice(4) : endpoint;
+    const res = await fetch(`${API_BASE}${normalizedEndpoint}`, { ...options, headers });
+    const contentType = res.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await res.json() : {};
     if (!res.ok) throw new Error(data.error || 'API Request Failed');
     return data;
   } catch (err) {
@@ -1525,12 +1527,15 @@ async function handlePostJobSubmit(e) {
   const salary_stipend = document.getElementById('job-post-salary').value.trim();
   const min_cgpa = document.getElementById('job-post-cgpa').value;
   const required_skills = document.getElementById('job-post-skills').value.trim();
+  const min_ai_score = Number(document.getElementById('job-post-ai-score').value || 70);
+  const department = document.getElementById('job-post-department').value.trim();
+  const max_backlogs = document.getElementById('job-post-backlogs').value;
   const deadline = document.getElementById('job-post-deadline').value;
 
   try {
     await apiFetch('/company/jobs', {
       method: 'POST',
-      body: JSON.stringify({ title, location, salary_stipend, min_cgpa, required_skills, deadline })
+      body: JSON.stringify({ title, location, salary_stipend, min_cgpa, required_skills, min_ai_score, department, max_backlogs, deadline })
     });
     alert('Job Requirement Published to Candidates!');
     navigateTo('company-dashboard');

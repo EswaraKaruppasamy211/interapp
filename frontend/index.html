@@ -275,7 +275,10 @@
               <div><label class="block text-xs font-bold mb-1">Location *</label><input type="text" id="job-post-loc" class="saas-input" placeholder="Bengaluru / Hybrid" required /></div>
               <div><label class="block text-xs font-bold mb-1">Salary / Stipend</label><input type="text" id="job-post-salary" class="saas-input" placeholder="₹ 12,00,000 P.A." required /></div>
               <div><label class="block text-xs font-bold mb-1">Minimum CGPA Cutoff</label><input type="number" step="0.1" id="job-post-cgpa" class="saas-input" value="7.5" required /></div>
-              <div><label class="block text-xs font-bold mb-1">Required Skills (Comma Separated)</label><input type="text" id="job-post-skills" class="saas-input" placeholder="Java, Python, SQL" required /></div>
+              <div><label class="block text-xs font-bold mb-1">Required Skills (Name:minimum %, comma separated)</label><input type="text" id="job-post-skills" class="saas-input" placeholder="Java:50, Python:60, SQL:50" required /></div>
+              <div><label class="block text-xs font-bold mb-1">Minimum AI Match Score (%)</label><input type="number" min="0" max="100" id="job-post-ai-score" class="saas-input" value="70" required /></div>
+              <div><label class="block text-xs font-bold mb-1">Department</label><input type="text" id="job-post-department" class="saas-input" placeholder="CSE" /></div>
+              <div><label class="block text-xs font-bold mb-1">Maximum Backlogs</label><input type="number" min="0" id="job-post-backlogs" class="saas-input" placeholder="0" /></div>
               <div><label class="block text-xs font-bold mb-1">Application Deadline</label><input type="date" id="job-post-deadline" class="saas-input" required /></div>
             </div>
             <button type="submit" class="btn-saas btn-primary"><i class="fa-solid fa-paper-plane"></i> Publish Job Requirement</button>

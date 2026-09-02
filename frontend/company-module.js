@@ -134,7 +134,10 @@ async function handlePostJobSubmit(e) {
     location: document.getElementById('job-post-loc')?.value,
     salary_stipend: document.getElementById('job-post-salary')?.value,
     min_cgpa: Number(document.getElementById('job-post-cgpa')?.value),
-    required_skills: (document.getElementById('job-post-skills')?.value || '').split(',').map(s => s.trim()),
+    required_skills: document.getElementById('job-post-skills')?.value || '',
+    min_ai_score: Number(document.getElementById('job-post-ai-score')?.value || 70),
+    department: document.getElementById('job-post-department')?.value || '',
+    max_backlogs: document.getElementById('job-post-backlogs')?.value || '',
     deadline: document.getElementById('job-post-deadline')?.value,
     status: 'Published'
   };

@@ -99,9 +99,6 @@ async function initializeRoleAwareUI() {
     // Load role-specific suggestions
     const suggestionsData = await apiFetch('/api/ai/suggestions');
     updateAISuggestions(suggestionsData.suggestions);
-    
-    // Load and render role-specific navigation
-    await loadRoleSpecificNavigation();
   } catch (err) {
     console.warn('Failed to load role-aware UI context:', err.message);
   }
